@@ -82,7 +82,9 @@ export function createYbdb() {
       <section class="card">
         <div class="card-h row" style="justify-content:space-between">ODALAR <span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="yOdaCount">Bağlandıktan sonra listelenir</span></div>
         <div class="card-b" style="padding-bottom:8px"><input type="search" id="yOdaSearch" placeholder="Oda ara: ad, bölüm, ID…" style="width:100%"></div>
-        <div class="table-wrap" style="max-height:calc(100vh - 380px)"><table><thead><tr id="yOdaHead"></tr></thead><tbody id="yOdaBody"></tbody></table></div>
+        <div class="table-wrap" style="max-height:calc(100vh - 380px)"><table class="fixed" style="min-width:420px">
+          <colgroup><col style="width:56px"><col><col style="width:110px"><col style="width:150px"></colgroup>
+          <thead><tr id="yOdaHead"></tr></thead><tbody id="yOdaBody"></tbody></table></div>
       </section>
 
       <section class="card">
@@ -93,7 +95,9 @@ export function createYbdb() {
           <input type="search" id="yYatakSearch" placeholder="Yatak ara: hasta, yatak, oda…  (Ctrl+F)" style="width:340px;max-width:100%">
           <label class="chk"><input type="checkbox" id="yBosOnly"> Sadece boş yataklar</label>
         </div>
-        <div class="table-wrap" style="max-height:calc(100vh - 380px)"><table><thead><tr id="yYatakHead"></tr></thead><tbody id="yYatakBody"></tbody></table></div>
+        <div class="table-wrap" style="max-height:calc(100vh - 380px)"><table class="fixed" style="min-width:900px">
+          <colgroup><col style="width:70px"><col><col style="width:80px"><col style="width:80px"><col style="width:80px"><col style="width:135px"><col style="width:100px"><col style="width:80px"></colgroup>
+          <thead><tr id="yYatakHead"></tr></thead><tbody id="yYatakBody"></tbody></table></div>
       </section>
     </div>`;
 
@@ -244,8 +248,8 @@ export function createYbdb() {
       const pct = o.yatakSayisi ? Math.round((100 * o.doluSayisi) / o.yatakSayisi) : 0;
       return `<tr class="item" data-id="${esc(o.id)}" style="cursor:pointer${o.id === selectedOda ? ";background:var(--row-selected)" : ""}">
         <td class="mono">${esc(o.id)}</td>
-        <td>${chip(o.renk, o.adi)}</td>
-        <td>${esc(o.bolumAdi) || DASH}</td>
+        <td title="${esc(o.adi)}">${chip(o.renk, o.adi)}</td>
+        <td title="${esc(o.bolumAdi)}">${esc(o.bolumAdi) || DASH}</td>
         <td>${o.yatakSayisi ? `<div class="row tight" style="flex-wrap:nowrap"><span style="min-width:44px">${o.doluSayisi} / ${o.yatakSayisi}</span>
           <div class="progress" style="width:70px"><div style="width:${pct}%"></div></div></div>` : DASH}</td></tr>`;
     }).join("") : `<tr><td class="empty" colspan="4">Aramaya uyan oda yok.</td></tr>`;
@@ -265,12 +269,12 @@ export function createYbdb() {
       const isDolu = y.hastaId != null;
       return `<tr class="item">
         <td><span class="badge ${isDolu ? "sev-info" : "sev-ok"}">${esc(y.durum)}</span></td>
-        <td>${y.hastaAdi ? `<b>${esc(y.hastaAdi)}</b>` : `<span class="txt-muted">${DASH}</span>`}</td>
+        <td title="${esc(y.hastaAdi ?? "")}">${y.hastaAdi ? `<b>${esc(y.hastaAdi)}</b>` : `<span class="txt-muted">${DASH}</span>`}</td>
         <td class="mono">${esc(y.hastaId) || DASH}</td>
-        <td>${esc(y.yatakAdi)}</td>
+        <td title="${esc(y.yatakAdi)}">${esc(y.yatakAdi)}</td>
         <td class="mono">${esc(y.yatakId)}</td>
-        <td>${chip(y.renk, y.odaAdi)}</td>
-        <td>${esc(y.bolumAdi) || DASH}</td>
+        <td title="${esc(y.odaAdi)}">${chip(y.renk, y.odaAdi)}</td>
+        <td title="${esc(y.bolumAdi)}">${esc(y.bolumAdi) || DASH}</td>
         <td class="mono">${esc(y.basamak) || DASH}</td></tr>`;
     }).join("") : `<tr><td class="empty" colspan="8">Filtreye uyan yatak yok.</td></tr>`;
   }
