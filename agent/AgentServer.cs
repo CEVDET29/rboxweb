@@ -1,0 +1,332 @@
+using System.Net;
+using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using RboxAgent.Modules.Ping;
+
+namespace RboxAgent
+{
+    /// <summary>
+    /// Yalnızca 127.0.0.1'i dinleyen küçük HTTP sunucusu. Güvenlik katmanları:
+    ///  1) Yalnızca loopback adresine bağlanır.
+    ///  2) Host başlığı doğrulanır (DNS rebinding).
+    ///  3) Origin izin listesinde değilse tarayıcı isteği reddedilir (CORS).
+    ///  4) /api/hello dışındaki her uç nokta, konsolda gösterilen açılışa özel kodu (X-Rbox-Token) ister.
+    ///  5) Yanlış kod denemeleri sınırlanır.
+    /// </summary>
+    internal sealed class AgentServer
+    {
+        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+        private readonly AgentOptions _o;
+        private HttpListener? _listener;
+        private int _failures;
+        private DateTime _lockedUntil = DateTime.MinValue;
+
+        public AgentServer(AgentOptions o) => _o = o;
+
+        public int Port { get; private set; }
+
+        public void Start()
+        {
+            for (int p = _o.Port; p < _o.Port + 10; p++)
+            {
+                var l = new HttpListener();
+                l.Prefixes.Add($"http://127.0.0.1:{p}/");
+                l.Prefixes.Add($"http://localhost:{p}/");
+                try
+                {
+                    l.Start();
+                    _listener = l;
+                    Port = p;
+                    return;
+                }
+                catch (HttpListenerException)
+                {
+                    l.Close(); // port dolu: sıradakini dene
+                }
+            }
+            throw new InvalidOperationException($"{_o.Port}-{_o.Port + 9} arası portların hepsi dolu.");
+        }
+
+        public async Task RunAsync()
+        {
+            while (_listener is { IsListening: true })
+            {
+                HttpListenerContext ctx;
+                try { ctx = await _listener.GetContextAsync(); }
+                catch { break; }
+                _ = Task.Run(() => HandleAsync(ctx));
+            }
+        }
+
+        // ── İstek işleme ─────────────────────────────────────────────────────
+
+        private async Task HandleAsync(HttpListenerContext ctx)
+        {
+            var req = ctx.Request;
+            var res = ctx.Response;
+            try
+            {
+                if (!HostOk(req)) { await Text(res, 400, "Bad host"); return; }
+
+                string? origin = req.Headers["Origin"];
+                if (origin != null)
+                {
+                    if (!OriginOk(origin)) { await Text(res, 403, "Origin izinli değil"); return; }
+                    res.Headers["Access-Control-Allow-Origin"] = origin;
+                    res.Headers["Vary"] = "Origin";
+                    res.Headers["Access-Control-Allow-Headers"] = "Content-Type, X-Rbox-Token, X-File-Name";
+                    res.Headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS";
+                    res.Headers["Access-Control-Allow-Private-Network"] = "true";
+                    res.Headers["Access-Control-Max-Age"] = "600";
+                }
+                if (req.HttpMethod == "OPTIONS") { res.StatusCode = 204; res.Close(); return; }
+
+                string path = req.Url!.AbsolutePath;
+                if (!path.StartsWith("/api/", StringComparison.Ordinal))
+                {
+                    await StaticAsync(res, path);
+                    return;
+                }
+
+                res.Headers["Cache-Control"] = "no-store";
+
+                if (path == "/api/hello")
+                {
+                    await Reply(res, new
+                    {
+                        app = "RboxAgent",
+                        version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3),
+                        machine = Environment.MachineName,
+                        port = Port,
+                        dotnet = Environment.Version.ToString(),
+                        authorized = TokenOk(req, countFailure: false),
+                    });
+                    return;
+                }
+
+                if (!TokenOk(req, countFailure: true))
+                {
+                    await Reply(res, new { error = _lockedUntil > DateTime.UtcNow ? "Çok fazla hatalı deneme. Biraz bekleyin." : "Kod hatalı." }, 401);
+                    return;
+                }
+
+                await RouteAsync(req, res, path);
+            }
+            catch (Exception ex)
+            {
+                try { await Reply(res, new { error = ex.Message }, 500); } catch { }
+            }
+        }
+
+        private async Task RouteAsync(HttpListenerRequest req, HttpListenerResponse res, string path)
+        {
+            string m = req.HttpMethod;
+            var ping = DataStore.Settings.Ping;
+
+            switch (m, path)
+            {
+                case ("GET", "/api/auth"):
+                    await Reply(res, new { ok = true });
+                    return;
+
+                // ── Excel ────────────────────────────────────────────────────
+                case ("POST", "/api/excel"):
+                {
+                    string name = Uri.UnescapeDataString(req.Headers["X-File-Name"] ?? "liste.xlsx");
+                    string ext = Path.GetExtension(name).ToLowerInvariant();
+                    if (ext is not (".xlsx" or ".xls")) ext = ".xlsx";
+                    string tmp = Path.Combine(Path.GetTempPath(), $"rboxagent_{Guid.NewGuid():N}{ext}");
+                    try
+                    {
+                        await using (var f = File.Create(tmp)) await req.InputStream.CopyToAsync(f);
+                        var rows = ExcelReader.LoadDevices(tmp);
+                        await Reply(res, new { fileName = Path.GetFileName(name), rows = rows.Select(PingService.ToRowDto) });
+                    }
+                    catch (Exception ex)
+                    {
+                        await Reply(res, new { error = ex.Message }, 422);
+                    }
+                    finally { try { File.Delete(tmp); } catch { } }
+                    return;
+                }
+
+                // ── Ping ayarları ────────────────────────────────────────────
+                case ("GET", "/api/settings/ping"):
+                    OuiLookup.Preload();
+                    await Reply(res, new
+                    {
+                        sshUser = ping.SshUser,
+                        hasSshPass = !string.IsNullOrEmpty(ping.SshPassProtected),
+                        ping.CheckSsh, ping.CheckMac, ping.CheckVendor, ping.SshMacFallback,
+                        ping.Concurrency, ping.PingTimeoutMs, ping.TcpTimeoutMs, ping.SshTimeoutMs, ping.MonitorIntervalMin,
+                        oui = OuiLookup.SourceDescription,
+                    });
+                    return;
+
+                case ("PUT", "/api/settings/ping"):
+                {
+                    var b = await Body<PingSettingsIn>(req);
+                    if (b.SshUser != null) ping.SshUser = string.IsNullOrWhiteSpace(b.SshUser) ? "pi" : b.SshUser.Trim();
+                    if (b.SshPass != null) ping.SshPassProtected = DataStore.Protect(b.SshPass); // "" → parola silinir
+                    if (b.CheckSsh is bool a1) ping.CheckSsh = a1;
+                    if (b.CheckMac is bool a2) ping.CheckMac = a2;
+                    if (b.CheckVendor is bool a3) ping.CheckVendor = a3;
+                    if (b.SshMacFallback is bool a4) ping.SshMacFallback = a4;
+                    if (b.MonitorIntervalMin is int mi) ping.MonitorIntervalMin = Math.Clamp(mi, 1, 120);
+                    DataStore.Save();
+                    await Reply(res, new { ok = true });
+                    return;
+                }
+
+                // ── Ping çalıştırma (satır satır akan JSON) ──────────────────
+                case ("POST", "/api/ping/run"):
+                {
+                    var body = await Body<RunRequest>(req);
+                    string runId = Guid.NewGuid().ToString("N");
+                    res.StatusCode = 200;
+                    res.ContentType = "application/x-ndjson; charset=utf-8";
+                    res.SendChunked = true;
+                    var stream = res.OutputStream;
+
+                    async Task Emit(object o)
+                    {
+                        byte[] line = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(o, Json) + "\n");
+                        await stream.WriteAsync(line);
+                        await stream.FlushAsync();
+                    }
+
+                    try
+                    {
+                        await Emit(new { type = "start", runId, total = body.Rows.Count });
+                        await PingService.RunAsync(runId, body, Emit, CancellationToken.None);
+                    }
+                    finally { try { res.Close(); } catch { } }
+                    return;
+                }
+
+                case ("POST", "/api/ping/cancel"):
+                    await Reply(res, new { ok = PingService.Cancel(req.QueryString["id"] ?? "") });
+                    return;
+
+                case ("POST", "/api/ping/ssh"):
+                {
+                    var b = await Body<IpIn>(req);
+                    bool ok = false;
+                    try { ok = PingService.OpenSsh(b.Ip ?? "", ping.SshUser.Trim()); } catch { }
+                    await Reply(res, new { ok }, ok ? 200 : 400);
+                    return;
+                }
+            }
+
+            await Reply(res, new { error = "Bulunamadı" }, 404);
+        }
+
+        private sealed class IpIn { public string? Ip { get; set; } }
+        private sealed class PingSettingsIn
+        {
+            public string? SshUser { get; set; }
+            public string? SshPass { get; set; }
+            public bool? CheckSsh { get; set; }
+            public bool? CheckMac { get; set; }
+            public bool? CheckVendor { get; set; }
+            public bool? SshMacFallback { get; set; }
+            public int? MonitorIntervalMin { get; set; }
+        }
+
+        // ── Güvenlik ─────────────────────────────────────────────────────────
+
+        private bool HostOk(HttpListenerRequest req)
+        {
+            string host = req.Headers["Host"] ?? "";
+            int i = host.LastIndexOf(':');
+            string name = i > 0 ? host[..i] : host;
+            return name is "127.0.0.1" or "localhost";
+        }
+
+        private bool OriginOk(string origin)
+        {
+            if (origin.Equals($"http://127.0.0.1:{Port}", StringComparison.OrdinalIgnoreCase)) return true;
+            if (origin.Equals($"http://localhost:{Port}", StringComparison.OrdinalIgnoreCase)) return true;
+            return _o.AllowedOrigins.Any(o => o.Equals(origin.TrimEnd('/'), StringComparison.OrdinalIgnoreCase));
+        }
+
+        private bool TokenOk(HttpListenerRequest req, bool countFailure)
+        {
+            if (DateTime.UtcNow < _lockedUntil) return false;
+
+            string given = req.Headers["X-Rbox-Token"] ?? "";
+            bool ok = given.Length > 0 && CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(Normalize(given)), Encoding.UTF8.GetBytes(Normalize(_o.Token)));
+
+            if (ok) { _failures = 0; return true; }
+            if (countFailure && given.Length > 0 && Interlocked.Increment(ref _failures) >= 8)
+            {
+                _failures = 0;
+                _lockedUntil = DateTime.UtcNow.AddMinutes(1);
+            }
+            return false;
+        }
+
+        private static string Normalize(string s) => s.Replace("-", "").Replace(" ", "").ToUpperInvariant();
+
+        // ── Yanıt yardımcıları ───────────────────────────────────────────────
+
+        private static async Task<T> Body<T>(HttpListenerRequest req) where T : new()
+        {
+            var v = await JsonSerializer.DeserializeAsync<T>(req.InputStream, Json);
+            return v ?? new T();
+        }
+
+        private static async Task Reply(HttpListenerResponse res, object body, int status = 200)
+        {
+            byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(body, Json);
+            res.StatusCode = status;
+            res.ContentType = "application/json; charset=utf-8";
+            res.ContentLength64 = bytes.Length;
+            await res.OutputStream.WriteAsync(bytes);
+            res.Close();
+        }
+
+        private static async Task Text(HttpListenerResponse res, int status, string text)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(text);
+            res.StatusCode = status;
+            res.ContentType = "text/plain; charset=utf-8";
+            res.ContentLength64 = bytes.Length;
+            await res.OutputStream.WriteAsync(bytes);
+            res.Close();
+        }
+
+        // ── Statik site (isteğe bağlı: exe'nin yanındaki "site" klasörü) ─────
+
+        private static readonly Dictionary<string, string> Mime = new(StringComparer.OrdinalIgnoreCase)
+        {
+            [".html"] = "text/html; charset=utf-8", [".css"] = "text/css; charset=utf-8",
+            [".js"] = "text/javascript; charset=utf-8", [".json"] = "application/json",
+            [".svg"] = "image/svg+xml", [".png"] = "image/png", [".ico"] = "image/x-icon",
+        };
+
+        private async Task StaticAsync(HttpListenerResponse res, string path)
+        {
+            string? root = _o.SiteFolder;
+            if (root == null || !Directory.Exists(root)) { await Text(res, 404, "Site klasörü yok. Arayüz GitHub Pages'ten açılır."); return; }
+
+            string rel = Uri.UnescapeDataString(path.TrimStart('/'));
+            if (rel.Length == 0) rel = "index.html";
+            string full = Path.GetFullPath(Path.Combine(root, rel));
+            if (!full.StartsWith(Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
+            { await Text(res, 404, "Bulunamadı"); return; }
+
+            byte[] data = await File.ReadAllBytesAsync(full);
+            res.StatusCode = 200;
+            res.ContentType = Mime.GetValueOrDefault(Path.GetExtension(full), "application/octet-stream");
+            res.Headers["Cache-Control"] = "no-cache";
+            res.ContentLength64 = data.Length;
+            await res.OutputStream.WriteAsync(data);
+            res.Close();
+        }
+    }
+}

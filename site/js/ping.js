@@ -1,0 +1,459 @@
+// Ping Kontrol modülü: Excel'deki cihazlara ping, SSH portu ve MAC kontrolü (WPF PingView karşılığı).
+import { api, stream } from "./api.js";
+import { $, $$, esc, debounce, toast, downloadCsv, ICONS } from "./util.js";
+
+const ROOM_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6", "#EF4444", "#84CC16"];
+const DASH = "—";
+
+const COLUMNS = [
+  { key: "yatak", label: "Yatak", sort: (r) => r.yatak.toLowerCase() },
+  { key: "yatakId", label: "Yatak ID", sort: (r) => numOrText(r.yatakId) },
+  { key: "ip", label: "IP", sort: (r) => r.ipSort },
+  { key: "mac", label: "MAC (Excel)", sort: (r) => r.mac },
+  { key: "ping", label: "Ping", sort: (r) => (r.res ? r.res.pingSort : Number.MAX_SAFE_INTEGER) },
+  { key: "ssh", label: "SSH", sort: (r) => cell(r, "ssh").text },
+  { key: "dmac", label: "Cihaz MAC", sort: (r) => cell(r, "mac").text },
+  { key: "vendor", label: "Üretici", sort: (r) => cell(r, "vendor").text },
+  { key: "status", label: "Durum", sort: (r) => cell(r, "status").text },
+];
+
+const FILTERS = [
+  { id: "all", label: "Tümü", cls: "" },
+  { id: "ok", label: "Ulaşılan", cls: "ok" },
+  { id: "noreply", label: "Yanıt yok", cls: "warn" },
+  { id: "mismatch", label: "MAC uyuşmuyor", cls: "err" },
+  { id: "problems", label: "Sorunlu", cls: "err" },
+];
+
+function numOrText(v) {
+  const n = Number(v);
+  return v !== "" && Number.isFinite(n) ? n : String(v).toLowerCase();
+}
+
+/** Satırın ekranda görünen hücresi (durum: bekliyor / çalışıyor / iptal / sonuç). */
+function cell(r, col) {
+  const R = r.res;
+  switch (r.state) {
+    case "pending": return { text: "Bekleniyor", sev: "muted", source: "" };
+    case "running":
+      if (col === "ping") return { text: "…", sev: "muted" };
+      if (col === "status") return { text: "Kontrol ediliyor", sev: "info" };
+      return { text: "Bekleniyor", sev: "muted", source: "" };
+    case "cancelled":
+      if (col === "ping") return { text: "İptal", sev: "muted" };
+      if (col === "status") return { text: "İptal edildi", sev: "warn" };
+      return { text: DASH, sev: "muted", source: "" };
+    case "error":
+      if (col === "status") return { text: r.error || "Hata", sev: "error" };
+      return { text: DASH, sev: "muted", source: "" };
+  }
+  if (!R) return col === "status" ? { text: "", sev: "none" } : { text: DASH, sev: "muted", source: "" };
+  return R[col];
+}
+
+export function createPing(ctx) {
+  const root = document.createElement("div");
+  root.className = "stack";
+
+  // ── Durum ───────────────────────────────────────────────────
+  let rows = [];
+  let rooms = [];                     // [{title, idx, collapsed}]
+  let fileName = "";
+  let running = false;
+  let done = 0, total = 0, changedCount = 0;
+  let runId = null, abortCtl = null;
+  let filter = "all";
+  let search = "";
+  let sort = { key: null, dir: 1 };
+  let lastRunInfo = "";
+  let monitorTimer = null;
+  let cfg = { sshUser: "pi", hasSshPass: false, checkSsh: false, checkMac: false, checkVendor: false, sshMacFallback: false, monitorIntervalMin: 5, oui: "" };
+  let passDirty = false;
+
+  // ── İskelet ─────────────────────────────────────────────────
+  root.innerHTML = `
+    <section class="card">
+      <div class="card-h">Cihaz listesi ve kontrol</div>
+      <div class="card-b">
+        <div class="row">
+          <div class="drop" id="pDrop">
+            <div class="row tight">
+              <button class="btn" id="pPick">${ICONS.folder} Excel seç</button>
+              <div><b id="pFile">Liste seçilmedi</b><div class="sm muted" id="pFileSub">.xlsx / .xls — IP sütunu olan bir sayfa (dosyayı buraya sürükleyebilirsiniz)</div></div>
+            </div>
+          </div>
+          <button class="btn primary" id="pStart">${ICONS.play} <span>Kontrolü başlat</span></button>
+          <button class="btn" id="pExport">${ICONS.down} CSV</button>
+        </div>
+        <div class="progress" style="margin-top:14px"><div id="pBar"></div></div>
+        <div class="sm muted" id="pStatus" style="margin-top:6px">Hazır</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-h">Kontrol seçenekleri</div>
+      <div class="card-b">
+        <div class="row" style="gap:22px">
+          <label class="chk"><input type="checkbox" id="oSsh"> SSH portu (22)</label>
+          <label class="chk"><input type="checkbox" id="oMac"> MAC adresi</label>
+          <label class="chk"><input type="checkbox" id="oVendor"> Üretici</label>
+          <label class="chk" title="ARP'den MAC okunamazsa SSH ile cihazdan okur"><input type="checkbox" id="oFallback"> SSH ile MAC (yedek)</label>
+          <span class="spacer" style="flex:1"></span>
+          <label class="chk"><input type="checkbox" id="oMonitor"> <span id="oMonitorText">İzleme modu</span></label>
+        </div>
+        <div class="row" style="margin-top:12px" id="oSshRow">
+          <div><label class="field-label" for="oUser">SSH kullanıcı</label><input type="text" id="oUser" style="width:150px" autocomplete="off"></div>
+          <div><label class="field-label" for="oPass">SSH parola</label><input type="password" id="oPass" style="width:170px" autocomplete="new-password"></div>
+          <div class="sm muted" style="align-self:flex-end;padding-bottom:8px">Parola ajanda şifreli saklanır; tarayıcıya geri gönderilmez.</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="tiles" id="pTiles"></div>
+
+    <section class="card">
+      <div class="card-b row" style="padding-bottom:12px">
+        <input type="search" id="pSearch" placeholder="Ara: oda, yatak, IP, MAC…  (Ctrl+F)" style="width:340px;max-width:100%">
+        <span class="sm muted" id="pCount"></span>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr id="pHead"></tr></thead>
+        <tbody id="pBody"></tbody>
+      </table></div>
+    </section>`;
+
+  const q = (id) => $("#" + id, root);
+  const el = {
+    drop: q("pDrop"), pick: q("pPick"), file: q("pFile"), fileSub: q("pFileSub"),
+    start: q("pStart"), export: q("pExport"), bar: q("pBar"), status: q("pStatus"),
+    ssh: q("oSsh"), mac: q("oMac"), vendor: q("oVendor"), fallback: q("oFallback"),
+    monitor: q("oMonitor"), monitorText: q("oMonitorText"), user: q("oUser"), pass: q("oPass"),
+    tiles: q("pTiles"), search: q("pSearch"), count: q("pCount"), head: q("pHead"), body: q("pBody"),
+  };
+
+  // ── Ayarlar (ajanda saklanır) ───────────────────────────────
+  async function loadSettings() {
+    try { cfg = await api("/api/settings/ping"); } catch { return; }
+    el.ssh.checked = cfg.checkSsh; el.mac.checked = cfg.checkMac; el.vendor.checked = cfg.checkVendor;
+    el.fallback.checked = cfg.sshMacFallback;
+    el.user.value = cfg.sshUser;
+    el.pass.value = ""; el.pass.placeholder = cfg.hasSshPass ? "••••••••" : "";
+    el.monitorText.textContent = `İzleme modu (her ${cfg.monitorIntervalMin} dk)`;
+    updateStatus();
+  }
+
+  const saveSettings = debounce(async () => {
+    const body = {
+      sshUser: el.user.value, checkSsh: el.ssh.checked, checkMac: el.mac.checked,
+      checkVendor: el.vendor.checked, sshMacFallback: el.fallback.checked,
+    };
+    if (passDirty) { body.sshPass = el.pass.value; }
+    try {
+      await api("/api/settings/ping", { method: "PUT", body });
+      if (passDirty) { cfg.hasSshPass = el.pass.value.length > 0; el.pass.value = ""; el.pass.placeholder = cfg.hasSshPass ? "••••••••" : ""; passDirty = false; }
+      Object.assign(cfg, body);
+    } catch (e) { toast("Ayarlar kaydedilemedi: " + e.message); }
+  }, 500);
+
+  [el.ssh, el.mac, el.vendor, el.fallback].forEach((c) => c.addEventListener("change", () => { syncOptionDeps(); saveSettings(); }));
+  el.user.addEventListener("input", saveSettings);
+  el.pass.addEventListener("input", () => { passDirty = true; saveSettings(); });
+
+  function syncOptionDeps() {
+    // "SSH ile MAC" yalnızca MAC ve SSH açıkken anlamlı (WPF ile aynı mantık)
+    el.fallback.disabled = !(el.mac.checked && el.ssh.checked);
+  }
+
+  // ── Liste yükleme ───────────────────────────────────────────
+  function setDevices(devices) {
+    if (running) { toast("Kontrol sürerken liste değiştirilemez."); return false; }
+    const map = new Map();
+    rooms = [];
+    rows = devices.rows.map((d, id) => {
+      const key = d.oda.toLocaleLowerCase("tr");
+      if (!map.has(key)) { map.set(key, rooms.length); rooms.push({ title: d.oda || "(Oda belirtilmemiş)", idx: rooms.length, collapsed: false }); }
+      return { ...d, id, room: map.get(key), state: "idle", res: null, optKey: null, changed: false, error: "" };
+    });
+    fileName = devices.fileName;
+    lastRunInfo = "";
+    el.file.textContent = fileName;
+    el.fileSub.textContent = `${rows.length} cihaz · ${rooms.length} grup`;
+    stopMonitorIfEmpty();
+    render();
+    return true;
+  }
+
+  el.pick.addEventListener("click", () => ctx.pickDeviceList());
+  ["dragenter", "dragover"].forEach((e) => el.drop.addEventListener(e, (ev) => { ev.preventDefault(); el.drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((e) => el.drop.addEventListener(e, () => el.drop.classList.remove("over")));
+  el.drop.addEventListener("drop", (ev) => { ev.preventDefault(); const f = ev.dataTransfer?.files?.[0]; if (f) ctx.loadDeviceFile(f); });
+
+  // ── Kontrol çalıştırma ──────────────────────────────────────
+  const optKey = () => `${el.ssh.checked}|${el.mac.checked}|${el.fallback.checked}`;
+
+  async function runChecks(list, reset) {
+    if (running || list.length === 0) return;
+    running = true; done = 0; total = list.length; changedCount = 0; runId = null;
+    abortCtl = new AbortController();
+    const key = optKey();
+    if (reset) list.forEach((r) => { r.state = "pending"; });
+    // Seçenekler kaydedilmeden başlamasın
+    await saveSettings.flush?.();
+    updateUi(); render();
+
+    try {
+      await stream("/api/ping/run", { rows: list.map((r) => ({ id: r.id, ip: r.ip, mac: r.mac })), quiet: !reset }, (m) => onMessage(m, key, reset), abortCtl.signal);
+    } catch (e) {
+      if (e.name !== "AbortError") {
+        toast("Kontrol kesildi: " + e.message);
+        list.forEach((r) => { if (r.state === "pending" || r.state === "running") { r.state = "error"; r.error = "Bağlantı koptu"; } });
+      }
+    } finally {
+      const cancelled = abortCtl?.signal.aborted || list.some((r) => r.state === "cancelled");
+      running = false; abortCtl = null; runId = null;
+      const t = new Date().toLocaleTimeString("tr-TR");
+      lastRunInfo = cancelled ? `Son tarama ${t} iptal edildi`
+        : `Son tarama ${t}` + (changedCount > 0 ? ` · ${changedCount} cihazda değişiklik` : "");
+      updateUi(); render();
+    }
+  }
+
+  function onMessage(m, key, reset) {
+    if (m.type === "start") { runId = m.runId; return; }
+    const r = rows[m.id];
+    if (m.type === "running") { if (reset && r) r.state = "running"; }
+    else if (m.type === "cancelled") { if (r) { r.state = "cancelled"; r.res = null; r.changed = false; done++; } }
+    else if (m.type === "item") {
+      if (!r) return;
+      if (m.error) { r.state = "error"; r.error = m.status.text; r.res = null; r.changed = false; }
+      else {
+        r.changed = !!r.res && r.optKey === key && r.res.signature !== m.signature;
+        if (r.changed) changedCount++;
+        r.res = m; r.optKey = key; r.state = "done";
+      }
+      done++;
+    }
+    scheduleRender();
+  }
+
+  let raf = 0;
+  function scheduleRender() {
+    if (raf) return;
+    raf = requestAnimationFrame(() => { raf = 0; updateUi(); render(); });
+  }
+
+  async function startStop() {
+    if (running) {
+      el.status.textContent = "Durduruluyor…";
+      if (runId) api("/api/ping/cancel?id=" + runId, { method: "POST" }).catch(() => {});
+      return;
+    }
+    if (rows.length === 0) { toast("Önce bir Excel dosyası seçin."); return; }
+    runChecks(rows, true);
+  }
+  el.start.addEventListener("click", startStop);
+
+  // ── İzleme modu ─────────────────────────────────────────────
+  el.monitor.addEventListener("change", () => {
+    clearInterval(monitorTimer); monitorTimer = null;
+    if (el.monitor.checked) {
+      if (rows.length === 0) { toast("İzleme modu için önce bir Excel dosyası seçin."); el.monitor.checked = false; return; }
+      monitorTimer = setInterval(() => { if (!running && rows.length) runChecks(rows, false); }, cfg.monitorIntervalMin * 60_000);
+      if (!running) runChecks(rows, false);
+    }
+    updateStatus();
+  });
+  function stopMonitorIfEmpty() {
+    if (rows.length === 0 && monitorTimer) { clearInterval(monitorTimer); monitorTimer = null; el.monitor.checked = false; }
+  }
+
+  // ── Filtre, arama, sıralama ─────────────────────────────────
+  const macKey = (s) => (s || "").replace(/[:\-.\s]/g, "").toUpperCase();
+
+  function passes(r) {
+    const R = r.res;
+    const modeOk = {
+      all: true,
+      ok: R?.pingOk === true,
+      noreply: R?.pingOk === false,
+      mismatch: R?.macMatch === false,
+      problems: !R || R.hasProblem,
+    }[filter];
+    if (!modeOk) return false;
+
+    const s = search.trim().toLocaleLowerCase("tr");
+    if (!s) return true;
+    const dm = R?.mac?.text && R.mac.text !== DASH ? R.mac.text : "";
+    const hay = [rooms[r.room].title, r.yatak, r.yatakId, r.ip, r.mac, dm].join("\n").toLocaleLowerCase("tr");
+    if (hay.includes(s)) return true;
+    const mk = macKey(search);
+    return mk.length >= 4 && (macKey(r.mac).includes(mk) || macKey(dm).includes(mk));
+  }
+
+  function visibleRows() {
+    let list = rows.filter(passes);
+    const col = COLUMNS.find((c) => c.key === sort.key);
+    list.sort((a, b) => {
+      if (a.room !== b.room) return a.room - b.room;          // gruplar Excel sırasında kalır
+      if (!col) return a.id - b.id;
+      const x = col.sort(a), y = col.sort(b);
+      const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "tr", { numeric: true });
+      return c * sort.dir || a.id - b.id;
+    });
+    return list;
+  }
+
+  el.search.addEventListener("input", debounce(() => { search = el.search.value; render(); }, 120));
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f" && root.offsetParent !== null) {
+      e.preventDefault(); el.search.focus(); el.search.select();
+    }
+  });
+
+  el.head.addEventListener("click", (e) => {
+    const th = e.target.closest("th[data-k]"); if (!th) return;
+    sort = sort.key === th.dataset.k ? { key: th.dataset.k, dir: -sort.dir } : { key: th.dataset.k, dir: 1 };
+    render();
+  });
+
+  el.tiles.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-f]"); if (!t) return;
+    filter = filter === t.dataset.f ? "all" : t.dataset.f; render();
+  });
+
+  // ── Çizim ───────────────────────────────────────────────────
+  function badge(c) {
+    if (!c.text) return "";
+    return `<span class="badge sev-${c.sev}">${esc(c.text)}</span>`;
+  }
+
+  function stats() {
+    return {
+      ok: rows.filter((r) => r.res?.pingOk === true).length,
+      noreply: rows.filter((r) => r.res?.pingOk === false).length,
+      mismatch: rows.filter((r) => r.res?.macMatch === false).length,
+      problems: rows.filter((r) => r.res?.hasProblem).length,
+    };
+  }
+
+  function render() {
+    // Üst kutucuklar
+    const s = stats();
+    const tile = (id, label, n, cls) =>
+      `<button class="tile ${cls}" data-f="${id}" aria-pressed="${filter === id}"><div class="n">${n}</div><div class="l">${label}</div></button>`;
+    el.tiles.innerHTML =
+      tile("all", "Toplam cihaz", rows.length, "") + tile("ok", "Ulaşılan", s.ok, "ok") +
+      tile("noreply", "Yanıt yok", s.noreply, "warn") + tile("mismatch", "MAC uyuşmuyor", s.mismatch, "err") +
+      tile("problems", "Sorunlu", s.problems, "err");
+
+    // Başlık
+    el.head.innerHTML = COLUMNS.map((c) =>
+      `<th data-k="${c.key}">${c.label}${sort.key === c.key ? `<span class="arr">${sort.dir > 0 ? "▲" : "▼"}</span>` : ""}</th>`).join("") + "<th></th>";
+
+    const list = visibleRows();
+    el.count.textContent = rows.length ? `${list.length} / ${rows.length} satır` : "";
+
+    if (rows.length === 0) {
+      el.body.innerHTML = `<tr><td class="empty" colspan="${COLUMNS.length + 1}">Cihaz listesi yok.<br>Yukarıdan bir Excel dosyası seçin ya da buraya sürükleyin.</td></tr>`;
+      return;
+    }
+    if (list.length === 0) {
+      el.body.innerHTML = `<tr><td class="empty" colspan="${COLUMNS.length + 1}">Filtreye uyan satır yok.</td></tr>`;
+      return;
+    }
+
+    let html = "", lastRoom = -1;
+    for (const r of list) {
+      const room = rooms[r.room];
+      if (r.room !== lastRoom) {
+        lastRoom = r.room;
+        const members = rows.filter((x) => x.room === r.room);
+        const prob = members.filter((x) => x.res?.hasProblem).length;
+        html += `<tr class="group" data-room="${r.room}" style="cursor:pointer"><td colspan="${COLUMNS.length + 1}">
+          <span class="gchip" style="background:${ROOM_COLORS[r.room % ROOM_COLORS.length]}"></span>${room.collapsed ? "▸" : "▾"} ${esc(room.title)}
+          <span class="gcount">${members.length} cihaz${prob ? ` · <span class="txt-error">${prob} sorunlu</span>` : ""}</span></td></tr>`;
+      }
+      if (room.collapsed) continue;
+
+      const ping = cell(r, "ping"), ssh = cell(r, "ssh"), dm = cell(r, "mac"), ven = cell(r, "vendor"), st = cell(r, "status");
+      html += `<tr class="item${r.changed ? " changed" : ""}" data-id="${r.id}">
+        <td>${esc(r.yatak) || DASH}</td>
+        <td>${esc(r.yatakId) || DASH}</td>
+        <td class="mono">${esc(r.ip)}</td>
+        <td class="mono ${r.macInvalid ? "txt-error" : ""}" title="${r.macInvalid ? "Geçersiz MAC" : ""}">${esc(r.mac) || DASH}</td>
+        <td>${badge(ping)}</td>
+        <td>${badge(ssh)}</td>
+        <td class="mono ${dm.sev === "error" ? "txt-error" : dm.sev === "muted" ? "txt-muted" : ""}">${esc(dm.text)}${dm.source ? `<span class="src">${dm.source}</span>` : ""}</td>
+        <td class="${ven.sev === "warn" ? "" : ven.sev === "muted" ? "txt-muted" : ""}">${ven.sev === "warn" ? badge(ven) : esc(ven.text)}</td>
+        <td>${badge(st)}${r.changed ? ' <span class="badge sev-warn" title="Önceki taramaya göre değişti">değişti</span>' : ""}</td>
+        <td class="actions">
+          <button class="btn icon" data-act="recheck" title="Yeniden kontrol et">${ICONS.redo}</button>
+          <button class="btn icon" data-act="copy" title="IP'yi kopyala">${ICONS.copy}</button>
+          <button class="btn icon" data-act="ssh" title="SSH ile bağlan (sunucuda terminal açar)">${ICONS.term}</button>
+          <button class="btn icon" data-act="web" title="Tarayıcıda aç">${ICONS.globe}</button>
+        </td></tr>`;
+    }
+    el.body.innerHTML = html;
+  }
+
+  el.body.addEventListener("click", async (e) => {
+    const g = e.target.closest("tr.group");
+    if (g) { const room = rooms[+g.dataset.room]; room.collapsed = !room.collapsed; render(); return; }
+
+    const btn = e.target.closest("[data-act]"); if (!btn) return;
+    const r = rows[+btn.closest("tr").dataset.id];
+    switch (btn.dataset.act) {
+      case "recheck": if (!running) runChecks([r], true); break;
+      case "copy":
+        try { await navigator.clipboard.writeText(r.ip); toast("IP kopyalandı: " + r.ip); } catch { toast("Kopyalanamadı"); }
+        break;
+      case "ssh":
+        try { await api("/api/ping/ssh", { method: "POST", body: { ip: r.ip } }); } catch (err) { toast("SSH başlatılamadı: " + err.message); }
+        break;
+      case "web": window.open(`http://${r.ip}/`, "_blank", "noopener"); break;
+    }
+  });
+
+  el.export.addEventListener("click", () => {
+    const list = visibleRows();
+    if (!list.length) { toast("Dışa aktarılacak satır yok."); return; }
+    const headers = ["ODA ADI", "Yatak ADI", "YATAK ID", "IP", "MAC (Excel)", "Ping", "SSH", "Cihaz MAC", "MAC kaynağı", "Üretici", "Durum"];
+    const data = list.map((r) => [
+      rooms[r.room].title, r.yatak, r.yatakId, r.ip, r.mac,
+      cell(r, "ping").text, cell(r, "ssh").text, cell(r, "mac").text, cell(r, "mac").source || "",
+      cell(r, "vendor").text, cell(r, "status").text + (r.changed ? " (değişti)" : ""),
+    ]);
+    const base = (fileName || "PingKontrol").replace(/\.[^.]+$/, "");
+    const d = new Date(), p = (n) => String(n).padStart(2, "0");
+    downloadCsv(`${base}_sonuc_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`, headers, data);
+    el.status.textContent = `${list.length} satır dışa aktarıldı`;
+  });
+
+  // ── Durum çubuğu ────────────────────────────────────────────
+  function updateStatus() {
+    const parts = [];
+    if (running) parts.push(`${done}/${total} tamamlandı`);
+    else if (lastRunInfo) parts.push(lastRunInfo);
+    if (el.monitor.checked) parts.push(`İzleme açık · her ${cfg.monitorIntervalMin} dk`);
+    if (cfg.oui) parts.push(cfg.oui);
+    el.status.textContent = parts.length ? parts.join("  ·  ") : "Hazır";
+  }
+
+  function updateUi() {
+    el.start.innerHTML = running ? `${ICONS.stop} <span>Durdur</span>` : `${ICONS.play} <span>Kontrolü başlat</span>`;
+    el.start.classList.toggle("danger", running);
+    el.start.classList.toggle("primary", !running);
+    el.pick.disabled = running;
+    el.bar.style.width = total ? `${Math.round((done / total) * 100)}%` : "0";
+    updateStatus();
+  }
+
+  syncOptionDeps();
+  render();
+
+  return {
+    root,
+    onShow: loadSettings,
+    setDevices,
+  };
+}

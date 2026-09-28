@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>RasyoBOX Araçları</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230B2753'/%3E%3Ctext x='9' y='23' font-family='Segoe UI' font-weight='700' font-size='20' fill='white'%3ER%3C/text%3E%3Ccircle cx='24' cy='9' r='3' fill='%232DD4BF'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/app.css">
+  <script>
+    // Tema, sayfa çizilmeden önce uygulanır (yanıp sönme olmasın)
+    try {
+      var t = localStorage.getItem("rbox.theme");
+      if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches))
+        document.documentElement.dataset.theme = "dark";
+    } catch (e) {}
+  </script>
+</head>
+<body>
+
+  <!-- 1) Giriş şifresi -->
+  <section id="gate" class="screen" hidden>
+    <form class="panel" id="gateForm" autocomplete="off">
+      <div class="logo"><div class="logo-mark">R</div><div class="logo-text"><b>Rasyo</b><span>BOX</span><small>RASYOMED</small></div></div>
+      <h1>Giriş</h1>
+      <p>Devam etmek için şifreyi girin.</p>
+      <div class="field"><input type="password" id="gatePass" placeholder="Şifre" style="width:100%" autofocus></div>
+      <button class="btn primary" style="width:100%;justify-content:center" type="submit">Giriş yap</button>
+      <div class="err" id="gateErr"></div>
+    </form>
+  </section>
+
+  <!-- 2) Ajan bağlantısı -->
+  <section id="connect" class="screen" hidden>
+    <div class="panel">
+      <div class="logo"><div class="logo-mark">R</div><div class="logo-text"><b>Rasyo</b><span>BOX</span><small>RASYOMED</small></div></div>
+
+      <div id="cnNone">
+        <h1>Ajan bulunamadı</h1>
+        <p>Ping, SSH ve SQL işlemleri bu bilgisayarda çalışan küçük bir yardımcı programla (ajan) yapılır.</p>
+        <ol class="steps">
+          <li><span class="code">RboxAgent.exe</span> dosyasını çalıştırın (kurulum gerekmez).</li>
+          <li>Açılan pencerede yazan <b>bağlantı kodunu</b> bu sayfaya girin.</li>
+        </ol>
+        <p class="sm muted" id="cnScan">Aranıyor…</p>
+        <button class="btn" id="cnRetry">Yeniden ara</button>
+      </div>
+
+      <form id="cnCode" hidden>
+        <h1>Bağlantı kodu</h1>
+        <p><b id="cnMachine"></b> üzerindeki ajan bulundu. Ajan penceresinde yazan kodu girin.</p>
+        <div class="field"><input type="text" id="cnToken" class="codebox" maxlength="7" placeholder="ABC-123" style="width:100%" autocomplete="off"></div>
+        <button class="btn primary" style="width:100%;justify-content:center" type="submit">Bağlan</button>
+        <div class="err" id="cnErr"></div>
+      </form>
+    </div>
+  </section>
+
+  <!-- 3) Uygulama -->
+  <div id="app" hidden>
+    <header class="topbar">
+      <div class="topbar-row">
+        <div class="logo"><div class="logo-mark">R</div><div class="logo-text"><b>Rasyo</b><span>BOX</span><small>RASYOMED</small></div></div>
+        <nav class="tabs" id="tabs" role="tablist"></nav>
+        <span class="spacer"></span>
+        <span class="hbtn agent-pill" id="agentPill" title="Ajan bağlantısı"><i></i><span id="agentName"></span></span>
+        <button class="hbtn" id="btnCompact" title="Kompakt görünüm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+        <button class="hbtn" id="btnTheme" title="Tema"></button>
+        <button class="hbtn" id="btnLogout" title="Çıkış"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
+      </div>
+      <h1 class="page-title" id="pageTitle"></h1>
+      <p class="page-sub" id="pageSub"></p>
+    </header>
+    <main><div id="view"></div></main>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
