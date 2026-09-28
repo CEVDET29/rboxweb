@@ -50,7 +50,8 @@ dotnet run -- --token TEST-01 --site ..\site      # http://127.0.0.1:47800 (giri
    ```powershell
    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/KULLANICI/rboxweb/main/tools/start-agent.ps1))) -Repo KULLANICI/rboxweb
    ```
-   Ajan penceresindeki kodu sayfaya yaz. Kurulum yok; `.NET 8` yoksa betik uyarır.
+   Ajan tarayıcıyı `.../#code=KOD` adresiyle açar; sayfa kodu adresten alıp kendiliğinden bağlanır (kopyala-yapıştır yok).
+   Kurulum yok; `.NET 8` yoksa betik uyarır. Ajan elle başlatılırsa kod, ajan penceresinden sayfaya yazılır.
 
 Elle çalıştırmak için: `RboxAgent.exe --origin https://KULLANICI.github.io`
 

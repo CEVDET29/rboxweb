@@ -121,6 +121,8 @@ namespace RboxAgent
             string? open = opts.OpenUrl ?? (opts.SiteFolder != null ? self : null);
             if (opts.OpenBrowser && open != null)
             {
+                // Kod adresin "#" kısmında gider: sunucuya/GitHub'a gönderilmez, sayfa okuyup kendiliğinden bağlanır.
+                if (!open.Contains('#')) open += "#code=" + opts.Token;
                 try { Process.Start(new ProcessStartInfo(open) { UseShellExecute = true }); } catch { }
             }
 

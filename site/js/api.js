@@ -1,11 +1,12 @@
 // Yerel ajanla (127.0.0.1) konuşan katman.
-import { sessionGet, sessionSet } from "./util.js";
+import { storeGet, storeSet } from "./util.js";
 
 const FIRST_PORT = 47800;
 const PORT_COUNT = 10;
 
 let base = null;      // örn. http://127.0.0.1:47800
-let token = sessionGet("rbox.token") || "";
+// Kod yalnızca çalışan ajan için geçerli (ajan kapanınca ölür); bu yüzden sekme kapansa da hatırlanması zararsız.
+let token = storeGet("rbox.token") || "";
 const listeners = new Set();
 
 export const agent = {
@@ -56,7 +57,7 @@ export async function discover() {
 
 export function setToken(t) {
   token = (t || "").trim().toUpperCase();
-  sessionSet("rbox.token", token || null);
+  storeSet("rbox.token", token);
 }
 
 export async function checkToken() {

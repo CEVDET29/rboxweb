@@ -51,7 +51,7 @@ async function connectFlow() {
   $("#cnNone").hidden = true;
   $("#cnCode").hidden = false;
   $("#cnMachine").textContent = info.machine;
-  $("#cnErr").textContent = sessionGet("rbox.token") ? "Kayıtlı kod artık geçerli değil (ajan yeniden başlatılmış olabilir)." : "";
+  $("#cnErr").textContent = storeGet("rbox.token") ? "Kayıtlı kod artık geçerli değil (ajan yeniden başlatılmış olabilir)." : "";
   $("#cnToken").value = "";
   $("#cnToken").focus();
 }
@@ -200,9 +200,18 @@ $("#btnCompact").addEventListener("click", () => {
 });
 if (storeGet("rbox.compact") === "1") document.body.classList.add("compact");
 
-$("#btnLogout").addEventListener("click", () => { sessionSet("rbox.auth", null); sessionSet("rbox.token", null); location.reload(); });
+$("#btnLogout").addEventListener("click", () => { sessionSet("rbox.auth", null); setToken(""); location.reload(); });
 
 // ── Başlangıç ────────────────────────────────────────────────
+// Ajan tarayıcıyı ".../#code=ABC-123" ile açar: kodu al, adresten sil (geçmişte/paylaşımda kalmasın).
+{
+  const m = location.hash.match(/[#&]code=([A-Za-z0-9-]{4,12})/);
+  if (m) {
+    setToken(m[1]);
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+}
+
 (async () => {
   if (await passwordOk()) await connectFlow();
   else { show("gate"); $("#gatePass").focus(); }
