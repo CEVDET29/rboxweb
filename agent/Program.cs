@@ -111,7 +111,8 @@ namespace RboxAgent
             Console.ResetColor();
             Console.WriteLine();
             Console.WriteLine();
-            Console.WriteLine("  Bu kodu web sayfasındaki kutuya yazın. Ajan her açılışta yeni kod üretir.");
+            Console.WriteLine("  Tarayıcı kodla birlikte açılır ve kendiliğinden bağlanır. Bağlanmazsa bu kodu sayfaya yazın.");
+            Console.WriteLine("  Ajan her açılışta yeni kod üretir.");
             Console.WriteLine("  Verilerin (ayarlar, şifreli parolalar): " + DataStore.Folder);
             if (opts.AllowedOrigins.Count == 0 && opts.SiteFolder == null)
                 Console.WriteLine("  UYARI: izinli web adresi yok. --origin https://kullanici.github.io ile başlatın.");

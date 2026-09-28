@@ -55,5 +55,21 @@ dotnet run -- --token TEST-01 --site ..\site      # http://127.0.0.1:47800 (giri
 
 Elle çalıştırmak için: `RboxAgent.exe --origin https://KULLANICI.github.io`
 
+## Masaüstü (WPF) sürümünü hastaneye indirmek
+
+"Ajan bulunamadı" ekranındaki **Komutu kopyala** düğmesine **hızlıca 3 kez** tıklayınca ajan komutu yerine
+masaüstü sürümü komutu kopyalanır. PowerShell'e yapıştırılınca `tools/install-desktop.ps1` çalışır:
+
+- Sürüm `C:\Rasyomed\RboxTools` içine kopyalanır (yol yoksa oluşturulur; `updateFiles`, ayarlar gibi hastaneye özel
+  dosyalara dokunulmaz, uygulama açıksa önce kapatmak gerekir).
+- Herhangi bir hata olursa aynı içerik **İndirilenler\RboxTools** klasörüne konur.
+
+Zip'i hazırlamak ve yayınlamak (yalnızca sürüm değişince):
+
+1. `tools\publish-desktop.ps1` → `dist\RboxTools-desktop.zip` (Release, framework-dependent, ~6 MB).
+2. GitHub → Releases → **Draft a new release** → tag: `desktop` → zip'i ekle → **Set as a pre-release** işaretle → Publish.
+   (Pre-release işaretlenmezse bu release "latest" olur ve `start-agent.ps1`'in indirdiği `RboxAgent.zip` bulunamaz.)
+   Güncellemek için aynı release'te zip'i silip yenisini yükleyin.
+
 > Not: Tarayıcılar `https` sayfadan `http://127.0.0.1` adresine bağlanmaya izin verir (Chrome/Edge/Firefox). Chrome ilk
 > bağlantıda "yerel ağdaki cihazlara erişim" izni sorabilir; izin verin. Safari bunu engelleyebilir; Chrome/Edge kullanın.

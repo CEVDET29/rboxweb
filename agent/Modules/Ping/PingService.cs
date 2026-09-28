@@ -49,13 +49,13 @@ namespace RboxAgent.Modules.Ping
             return true;
         }
 
-        public static CheckOptions BuildOptions(PingSettings s) => new(
+        public static CheckOptions BuildOptions(PingSettings s, SshSettings ssh) => new(
             CheckSsh: s.CheckSsh,
             CheckMac: s.CheckMac,
             CheckVendor: s.CheckVendor,
             SshMacFallback: s.SshMacFallback,
-            SshUser: s.SshUser.Trim(),
-            SshPass: DataStore.Unprotect(s.SshPassProtected),
+            SshUser: ssh.User.Trim(),
+            SshPass: DataStore.Unprotect(ssh.PassProtected),
             PingTimeoutMs: s.PingTimeoutMs,
             TcpTimeoutMs: s.TcpTimeoutMs,
             SshTimeoutMs: s.SshTimeoutMs);
@@ -67,7 +67,7 @@ namespace RboxAgent.Modules.Ping
         public static async Task RunAsync(string runId, RunRequest req, Func<object, Task> emit, CancellationToken clientGone)
         {
             var settings = DataStore.Settings.Ping;
-            var opt = BuildOptions(settings);
+            var opt = BuildOptions(settings, DataStore.Settings.Ssh);
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(clientGone);
             Runs[runId] = cts;
             var ct = cts.Token;

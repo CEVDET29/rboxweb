@@ -158,8 +158,6 @@ namespace RboxAgent
                     OuiLookup.Preload();
                     await Reply(res, new
                     {
-                        sshUser = ping.SshUser,
-                        hasSshPass = !string.IsNullOrEmpty(ping.SshPassProtected),
                         ping.CheckSsh, ping.CheckMac, ping.CheckVendor, ping.SshMacFallback,
                         ping.Concurrency, ping.PingTimeoutMs, ping.TcpTimeoutMs, ping.SshTimeoutMs, ping.MonitorIntervalMin,
                         oui = OuiLookup.SourceDescription,
@@ -169,13 +167,27 @@ namespace RboxAgent
                 case ("PUT", "/api/settings/ping"):
                 {
                     var b = await Body<PingSettingsIn>(req);
-                    if (b.SshUser != null) ping.SshUser = string.IsNullOrWhiteSpace(b.SshUser) ? "pi" : b.SshUser.Trim();
-                    if (b.SshPass != null) ping.SshPassProtected = DataStore.Protect(b.SshPass); // "" → parola silinir
                     if (b.CheckSsh is bool a1) ping.CheckSsh = a1;
                     if (b.CheckMac is bool a2) ping.CheckMac = a2;
                     if (b.CheckVendor is bool a3) ping.CheckVendor = a3;
                     if (b.SshMacFallback is bool a4) ping.SshMacFallback = a4;
                     if (b.MonitorIntervalMin is int mi) ping.MonitorIntervalMin = Math.Clamp(mi, 1, 120);
+                    DataStore.Save();
+                    await Reply(res, new { ok = true });
+                    return;
+                }
+
+                // ── Ortak SSH kullanıcı / parola (tüm modüller) ───────────────
+                case ("GET", "/api/settings/ssh"):
+                    await Reply(res, new { user = DataStore.Settings.Ssh.User, hasPass = !string.IsNullOrEmpty(DataStore.Settings.Ssh.PassProtected) });
+                    return;
+
+                case ("PUT", "/api/settings/ssh"):
+                {
+                    var b = await Body<SshSettingsIn>(req);
+                    var ssh = DataStore.Settings.Ssh;
+                    if (b.User != null) ssh.User = string.IsNullOrWhiteSpace(b.User) ? "pi" : b.User.Trim();
+                    if (b.Pass != null) ssh.PassProtected = DataStore.Protect(b.Pass);   // "" → parola silinir
                     DataStore.Save();
                     await Reply(res, new { ok = true });
                     return;
@@ -215,7 +227,7 @@ namespace RboxAgent
                 {
                     var b = await Body<IpIn>(req);
                     bool ok = false;
-                    try { ok = PingService.OpenSsh(b.Ip ?? "", ping.SshUser.Trim()); } catch { }
+                    try { ok = PingService.OpenSsh(b.Ip ?? "", DataStore.Settings.Ssh.User.Trim()); } catch { }
                     await Reply(res, new { ok }, ok ? 200 : 400);
                     return;
                 }
@@ -225,10 +237,14 @@ namespace RboxAgent
         }
 
         private sealed class IpIn { public string? Ip { get; set; } }
+        private sealed class SshSettingsIn
+        {
+            public string? User { get; set; }
+            public string? Pass { get; set; }
+        }
+
         private sealed class PingSettingsIn
         {
-            public string? SshUser { get; set; }
-            public string? SshPass { get; set; }
             public bool? CheckSsh { get; set; }
             public bool? CheckMac { get; set; }
             public bool? CheckVendor { get; set; }

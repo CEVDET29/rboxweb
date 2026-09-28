@@ -39,12 +39,11 @@
         <h1>Ajan bulunamadı</h1>
         <p>Ping, SSH ve SQL işlemleri bu bilgisayarda çalışan küçük bir yardımcı programla (ajan) yapılır.</p>
         <ol class="steps">
-          <li>Ajanı başlatın (kurulum gerekmez): aşağıdaki düğmelerden biri yeterli.</li>
+          <li>Komutu kopyalayıp PowerShell'e yapıştırın (kurulum gerekmez).</li>
           <li>Açılan pencerede yazan <b>bağlantı kodunu</b> bu sayfaya girin.</li>
         </ol>
         <div id="cnLaunch" class="row tight" style="margin-bottom:14px" hidden>
-          <button class="btn primary" id="cnBat" title="Çift tıklayınca ajanı indirip başlatır">İndir: Başlat.bat</button>
-          <button class="btn" id="cnCopy" title="PowerShell'e yapıştırın">Komutu kopyala</button>
+          <button class="btn primary" id="cnCopy" title="PowerShell'e yapıştırın">Komutu kopyala</button>
         </div>
         <p class="sm muted" id="cnScan">Aranıyor…</p>
         <button class="btn" id="cnRetry">Yeniden ara</button>
@@ -68,6 +67,18 @@
         <nav class="tabs" id="tabs" role="tablist"></nav>
         <span class="spacer"></span>
         <span class="hbtn agent-pill" id="agentPill" title="Ajan bağlantısı"><i></i><span id="agentName"></span></span>
+        <div class="pop-wrap">
+          <button class="hbtn" id="btnSsh" title="SSH kullanıcı adı ve şifresi (tüm modüller için ortak)"></button>
+          <div class="pop" id="sshPop" hidden>
+            <div class="pop-title">SSH bağlantısı</div>
+            <p class="sm muted" style="margin:2px 0 12px">Ping Kontrol, Cihaz Güncelleme ve Cihaz Kontrol bu bilgiyi ortak kullanır.</p>
+            <label class="field-label" for="sshUser">Kullanıcı</label>
+            <input type="text" id="sshUser" style="width:100%" autocomplete="off">
+            <label class="field-label" for="sshPass" style="margin-top:10px">Şifre</label>
+            <input type="password" id="sshPass" style="width:100%" autocomplete="new-password">
+            <p class="sm muted" style="margin:10px 0 0">Şifre ajanda şifreli saklanır; tarayıcıya geri gönderilmez.</p>
+          </div>
+        </div>
         <button class="hbtn" id="btnCompact" title="Kompakt görünüm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
         <button class="hbtn" id="btnTheme" title="Tema"></button>
         <button class="hbtn" id="btnLogout" title="Çıkış"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>

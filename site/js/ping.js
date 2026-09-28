@@ -67,8 +67,7 @@ export function createPing(ctx) {
   let sort = { key: null, dir: 1 };
   let lastRunInfo = "";
   let monitorTimer = null;
-  let cfg = { sshUser: "pi", hasSshPass: false, checkSsh: false, checkMac: false, checkVendor: false, sshMacFallback: false, monitorIntervalMin: 5, oui: "" };
-  let passDirty = false;
+  let cfg = { checkSsh: false, checkMac: false, checkVendor: false, sshMacFallback: false, monitorIntervalMin: 5, oui: "" };
 
   // ── İskelet ─────────────────────────────────────────────────
   root.innerHTML = `
@@ -101,11 +100,7 @@ export function createPing(ctx) {
           <span class="spacer" style="flex:1"></span>
           <label class="chk"><input type="checkbox" id="oMonitor"> <span id="oMonitorText">İzleme modu</span></label>
         </div>
-        <div class="row" style="margin-top:12px" id="oSshRow">
-          <div><label class="field-label" for="oUser">SSH kullanıcı</label><input type="text" id="oUser" style="width:150px" autocomplete="off"></div>
-          <div><label class="field-label" for="oPass">SSH parola</label><input type="password" id="oPass" style="width:170px" autocomplete="new-password"></div>
-          <div class="sm muted" style="align-self:flex-end;padding-bottom:8px">Parola ajanda şifreli saklanır; tarayıcıya geri gönderilmez.</div>
-        </div>
+        <div class="sm muted" style="margin-top:10px">SSH kullanıcı / şifre: üst banttaki <b>SSH</b> düğmesinden girilir (tüm modüller için ortak).</div>
       </div>
     </section>
 
@@ -127,7 +122,7 @@ export function createPing(ctx) {
     drop: q("pDrop"), pick: q("pPick"), file: q("pFile"), fileSub: q("pFileSub"),
     start: q("pStart"), export: q("pExport"), bar: q("pBar"), status: q("pStatus"),
     ssh: q("oSsh"), mac: q("oMac"), vendor: q("oVendor"), fallback: q("oFallback"),
-    monitor: q("oMonitor"), monitorText: q("oMonitorText"), user: q("oUser"), pass: q("oPass"),
+    monitor: q("oMonitor"), monitorText: q("oMonitorText"),
     tiles: q("pTiles"), search: q("pSearch"), count: q("pCount"), head: q("pHead"), body: q("pBody"),
   };
 
@@ -136,28 +131,22 @@ export function createPing(ctx) {
     try { cfg = await api("/api/settings/ping"); } catch { return; }
     el.ssh.checked = cfg.checkSsh; el.mac.checked = cfg.checkMac; el.vendor.checked = cfg.checkVendor;
     el.fallback.checked = cfg.sshMacFallback;
-    el.user.value = cfg.sshUser;
-    el.pass.value = ""; el.pass.placeholder = cfg.hasSshPass ? "••••••••" : "";
     el.monitorText.textContent = `İzleme modu (her ${cfg.monitorIntervalMin} dk)`;
     updateStatus();
   }
 
   const saveSettings = debounce(async () => {
     const body = {
-      sshUser: el.user.value, checkSsh: el.ssh.checked, checkMac: el.mac.checked,
+      checkSsh: el.ssh.checked, checkMac: el.mac.checked,
       checkVendor: el.vendor.checked, sshMacFallback: el.fallback.checked,
     };
-    if (passDirty) { body.sshPass = el.pass.value; }
     try {
       await api("/api/settings/ping", { method: "PUT", body });
-      if (passDirty) { cfg.hasSshPass = el.pass.value.length > 0; el.pass.value = ""; el.pass.placeholder = cfg.hasSshPass ? "••••••••" : ""; passDirty = false; }
       Object.assign(cfg, body);
     } catch (e) { toast("Ayarlar kaydedilemedi: " + e.message); }
   }, 500);
 
   [el.ssh, el.mac, el.vendor, el.fallback].forEach((c) => c.addEventListener("change", () => { syncOptionDeps(); saveSettings(); }));
-  el.user.addEventListener("input", saveSettings);
-  el.pass.addEventListener("input", () => { passDirty = true; saveSettings(); });
 
   function syncOptionDeps() {
     // "SSH ile MAC" yalnızca MAC ve SSH açıkken anlamlı (WPF ile aynı mantık)
@@ -197,8 +186,9 @@ export function createPing(ctx) {
     abortCtl = new AbortController();
     const key = optKey();
     if (reset) list.forEach((r) => { r.state = "pending"; });
-    // Seçenekler kaydedilmeden başlamasın
-    await saveSettings.flush?.();
+    // Seçenekler ve SSH bilgisi kaydedilmeden başlamasın (ajan kayıtlı değerleri okur)
+    await saveSettings.flush();
+    await ctx.flushSsh?.();
     updateUi(); render();
 
     try {

@@ -1,7 +1,7 @@
 // Kabuk: giriş şifresi → ajan bağlantısı → modül sekmeleri, tema, kompakt görünüm, ortak cihaz listesi.
 import { PASSWORD_SHA256 } from "./config.js";
 import { agent, discover, setToken, checkToken, api } from "./api.js";
-import { $, esc, sha256Hex, storeGet, storeSet, sessionGet, sessionSet, toast, ICONS } from "./util.js";
+import { $, esc, sha256Hex, storeGet, storeSet, sessionGet, sessionSet, toast, debounce, ICONS } from "./util.js";
 import { createPing } from "./ping.js";
 
 const MODULES = [
@@ -74,24 +74,25 @@ function launchCommand(repo) {
   return `powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm ${url}))) -Repo ${repo}"`;
 }
 
+// Masaüstü (WPF) sürümünü C:\Rasyomed\RboxTools'a indirir; yol yoksa oluşturur, hata olursa İndirilenler'e koyar.
+function desktopCommand(repo) {
+  const url = `https://raw.githubusercontent.com/${repo}/main/tools/install-desktop.ps1`;
+  return `powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm ${url}))) -Repo ${repo}"`;
+}
+
 const repo = detectRepo();
 if (repo) {
   $("#cnLaunch").hidden = false;
 
-  $("#cnCopy").addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText(launchCommand(repo)); toast("Komut kopyalandı. PowerShell'e yapıştırıp Enter'a basın."); }
-    catch { toast("Kopyalanamadı."); }
-  });
-
-  $("#cnBat").addEventListener("click", () => {
-    const bat = ["@echo off", "title RasyoBOX Ajan", launchCommand(repo), "echo.", "pause", ""].join("\r\n");
-    const a = Object.assign(document.createElement("a"), {
-      href: URL.createObjectURL(new Blob([bat], { type: "application/octet-stream" })),
-      download: "Rbox-Ajan-Baslat.bat",
-    });
-    document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    toast("İndirilen dosyaya çift tıklayın.");
+  // Normal tıklama: ajan komutu. Hızlıca 3 tıklama (e.detail = ardışık tıklama sayısı): masaüstü sürümü komutu.
+  $("#cnCopy").addEventListener("click", async (e) => {
+    const desktop = e.detail >= 3;
+    try {
+      await navigator.clipboard.writeText(desktop ? desktopCommand(repo) : launchCommand(repo));
+      toast(desktop
+        ? "Masaüstü sürümü komutu kopyalandı. PowerShell'e yapıştırın: C:\\Rasyomed\\RboxTools'a indirilir."
+        : "Komut kopyalandı. PowerShell'e yapıştırıp Enter'a basın.", desktop ? 5000 : 2600);
+    } catch { toast("Kopyalanamadı."); }
   });
 }
 
@@ -127,8 +128,9 @@ function enterApp() {
   if (entered) return;
   entered = true;
 
-  const ctx = { pickDeviceList, loadDeviceFile };
+  const ctx = { pickDeviceList, loadDeviceFile, flushSsh: () => saveSsh.flush() };
   views.ping = createPing(ctx);
+  loadSsh();
 
   $("#tabs").innerHTML = MODULES.map((m) =>
     `<button class="tab${m.soon ? " soon" : ""}" role="tab" data-m="${m.id}" aria-selected="false"${m.soon ? ' title="Bu modül sonraki aşamada eklenecek"' : ""}>${m.icon}<span>${m.title}</span></button>`).join("");
@@ -159,6 +161,55 @@ function select(id) {
   v.onShow?.();
 }
 const $$tabs = () => [...document.querySelectorAll("#tabs .tab")];
+
+// ── Ortak SSH kullanıcı / şifre (tüm modüller) ───────────────
+// Tek yerde girilir; ajanda şifreli saklanır. Şifre tarayıcıya geri gönderilmez.
+const ssh = { user: "pi", hasPass: false };
+let sshPassDirty = false;
+
+function renderSsh() {
+  const btn = $("#btnSsh");
+  btn.innerHTML = `${ICONS.lock}<span>${ssh.hasPass ? "SSH " + esc(ssh.user) : "SSH girilmedi"}</span>`;
+  btn.classList.toggle("warn", !ssh.hasPass);
+}
+
+async function loadSsh() {
+  try {
+    const s = await api("/api/settings/ssh");
+    ssh.user = s.user; ssh.hasPass = s.hasPass;
+    $("#sshUser").value = s.user;
+    $("#sshPass").placeholder = s.hasPass ? "••••••••" : "";
+  } catch { /* bağlantı yoksa düğme varsayılan kalır */ }
+  renderSsh();
+}
+
+const saveSsh = debounce(async () => {
+  const body = { user: $("#sshUser").value };
+  if (sshPassDirty) body.pass = $("#sshPass").value;
+  try {
+    await api("/api/settings/ssh", { method: "PUT", body });
+    ssh.user = body.user.trim() || "pi";
+    if (sshPassDirty) {
+      ssh.hasPass = body.pass.length > 0;
+      $("#sshPass").value = ""; $("#sshPass").placeholder = ssh.hasPass ? "••••••••" : "";
+      sshPassDirty = false;
+    }
+    renderSsh();
+  } catch (e) { toast("SSH bilgisi kaydedilemedi: " + e.message); }
+}, 500);
+
+$("#sshUser").addEventListener("input", saveSsh);
+$("#sshPass").addEventListener("input", () => { sshPassDirty = true; saveSsh(); });
+
+const sshPop = $("#sshPop");
+$("#btnSsh").addEventListener("click", (e) => {
+  e.stopPropagation();
+  sshPop.hidden = !sshPop.hidden;
+  if (!sshPop.hidden) { $("#sshUser").focus(); $("#sshUser").select(); }
+});
+document.addEventListener("click", (e) => { if (!sshPop.hidden && !e.target.closest(".pop-wrap")) sshPop.hidden = true; });
+sshPop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") { sshPop.hidden = true; saveSsh.flush(); } });
+renderSsh();
 
 // ── Ortak cihaz listesi (Excel) ──────────────────────────────
 const fileInput = Object.assign(document.createElement("input"), { type: "file", accept: ".xlsx,.xls", hidden: true });

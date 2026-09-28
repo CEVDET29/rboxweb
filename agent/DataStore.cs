@@ -27,13 +27,21 @@ namespace RboxAgent
 
         private static AgentSettings Load()
         {
+            AgentSettings s = new();
             try
             {
                 if (File.Exists(SettingsFile))
-                    return JsonSerializer.Deserialize<AgentSettings>(File.ReadAllText(SettingsFile)) ?? new AgentSettings();
+                    s = JsonSerializer.Deserialize<AgentSettings>(File.ReadAllText(SettingsFile)) ?? new AgentSettings();
             }
             catch { /* bozuk dosya → varsayılanlar */ }
-            return new AgentSettings();
+
+            // İlk sürümde SSH bilgisi Ping bölümündeydi; ortak bölüme taşı
+            if (string.IsNullOrEmpty(s.Ssh.PassProtected) && !string.IsNullOrEmpty(s.Ping.SshPassProtected))
+            {
+                s.Ssh.User = string.IsNullOrWhiteSpace(s.Ping.SshUser) ? "pi" : s.Ping.SshUser;
+                s.Ssh.PassProtected = s.Ping.SshPassProtected;
+            }
+            return s;
         }
 
         public static void Save()
@@ -71,11 +79,20 @@ namespace RboxAgent
 
     public sealed class AgentSettings
     {
+        /// <summary>Tüm modüllerin ortak SSH kullanıcı / parolası.</summary>
+        public SshSettings Ssh { get; set; } = new();
         public PingSettings Ping { get; set; } = new();
+    }
+
+    public sealed class SshSettings
+    {
+        public string User { get; set; } = "pi";
+        public string? PassProtected { get; set; }
     }
 
     public sealed class PingSettings
     {
+        // Yalnızca eski ayar dosyalarını okumak için (bkz. DataStore.Load); artık yazılmaz.
         public string SshUser { get; set; } = "pi";
         public string? SshPassProtected { get; set; }
 
