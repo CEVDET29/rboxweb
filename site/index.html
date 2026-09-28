@@ -39,9 +39,13 @@
         <h1>Ajan bulunamadı</h1>
         <p>Ping, SSH ve SQL işlemleri bu bilgisayarda çalışan küçük bir yardımcı programla (ajan) yapılır.</p>
         <ol class="steps">
-          <li><span class="code">RboxAgent.exe</span> dosyasını çalıştırın (kurulum gerekmez).</li>
+          <li>Ajanı başlatın (kurulum gerekmez): aşağıdaki düğmelerden biri yeterli.</li>
           <li>Açılan pencerede yazan <b>bağlantı kodunu</b> bu sayfaya girin.</li>
         </ol>
+        <div id="cnLaunch" class="row tight" style="margin-bottom:14px" hidden>
+          <button class="btn primary" id="cnBat" title="Çift tıklayınca ajanı indirip başlatır">İndir: Başlat.bat</button>
+          <button class="btn" id="cnCopy" title="PowerShell'e yapıştırın">Komutu kopyala</button>
+        </div>
         <p class="sm muted" id="cnScan">Aranıyor…</p>
         <button class="btn" id="cnRetry">Yeniden ara</button>
       </div>

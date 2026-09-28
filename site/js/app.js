@@ -58,6 +58,43 @@ async function connectFlow() {
 
 $("#cnRetry").addEventListener("click", connectFlow);
 
+// ── Ajanı başlatma yardımcıları ───────────────────────────────
+// Tarayıcı program başlatamaz; bu yüzden hazır komutu kopyalatır ya da çift tıklanacak bir .bat indirtiriz.
+// Depo, adresten bulunur: https://<kullanici>.github.io/<depo>/   (geliştirmede ?repo=KULLANICI/DEPO)
+function detectRepo() {
+  const q = new URLSearchParams(location.search).get("repo");
+  if (q && /^[\w.-]+\/[\w.-]+$/.test(q)) return q;
+  const m = location.hostname.match(/^([\w-]+)\.github\.io$/i);
+  const repo = location.pathname.split("/").filter(Boolean)[0];
+  return m && repo ? `${m[1]}/${repo}` : null;
+}
+
+function launchCommand(repo) {
+  const url = `https://raw.githubusercontent.com/${repo}/main/tools/start-agent.ps1`;
+  return `powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm ${url}))) -Repo ${repo}"`;
+}
+
+const repo = detectRepo();
+if (repo) {
+  $("#cnLaunch").hidden = false;
+
+  $("#cnCopy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(launchCommand(repo)); toast("Komut kopyalandı. PowerShell'e yapıştırıp Enter'a basın."); }
+    catch { toast("Kopyalanamadı."); }
+  });
+
+  $("#cnBat").addEventListener("click", () => {
+    const bat = ["@echo off", "title RasyoBOX Ajan", launchCommand(repo), "echo.", "pause", ""].join("\r\n");
+    const a = Object.assign(document.createElement("a"), {
+      href: URL.createObjectURL(new Blob([bat], { type: "application/octet-stream" })),
+      download: "Rbox-Ajan-Baslat.bat",
+    });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast("İndirilen dosyaya çift tıklayın.");
+  });
+}
+
 // Kod kutusu: konsoldan kopyalanan boşlukları / fazlalıkları temizler, ABC-123 biçimine getirir,
 // 6 karakter tamamlanınca kendiliğinden bağlanır.
 $("#cnToken").addEventListener("input", (e) => {
