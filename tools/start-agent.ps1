@@ -5,12 +5,15 @@
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/USER/REPO/main/tools/start-agent.ps1))) -Repo USER/REPO
 param(
     [string]$Repo   = '<USER>/<REPO>',
-    [string]$Origin = ''          # empty: https://<USER>.github.io
+    [string]$Origin = '',         # empty: https://<USER>.github.io
+    [string]$Token  = '',         # pairing code chosen by the web page; with it no browser tab is opened
+    [string]$ZipUrl = ''          # for testing only: use another address / file:// path instead of the release
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 if ($Repo -like '*<*') { throw 'Give -Repo USER/REPO first.' }
+if ($Token -and $Token -notmatch '^[A-Za-z0-9-]{4,40}$') { throw 'Invalid -Token.' }
 $user = $Repo.Split('/')[0]
 $name = $Repo.Split('/')[1]
 if (-not $Origin) { $Origin = "https://$user.github.io" }
@@ -30,8 +33,14 @@ $dir = Join-Path $env:TEMP 'RboxAgent'
 New-Item -ItemType Directory -Force $dir | Out-Null
 $zip = Join-Path $dir 'RboxAgent.zip'
 Write-Host "Downloading latest agent from $Repo ..."
-Invoke-WebRequest "https://github.com/$Repo/releases/latest/download/RboxAgent.zip" -OutFile $zip -UseBasicParsing
+$url = if ($ZipUrl) { $ZipUrl } else { "https://github.com/$Repo/releases/latest/download/RboxAgent.zip" }
+Invoke-WebRequest $url -OutFile $zip -UseBasicParsing
 Expand-Archive $zip -DestinationPath $dir -Force
 
 $exe = Join-Path $dir 'RboxAgent.exe'
-& $exe --origin $Origin --open $pageUrl
+if ($Token) {
+    # The page that generated the command is already open and knows the code: connect to it, do not open another tab
+    & $exe --origin $Origin --token $Token --no-browser
+} else {
+    & $exe --origin $Origin --open $pageUrl
+}

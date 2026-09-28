@@ -42,17 +42,17 @@ export async function discover() {
   if (/^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port) candidates.push(location.origin);
   for (let i = 0; i < PORT_COUNT; i++) candidates.push(`http://127.0.0.1:${FIRST_PORT + i}`);
 
+  // Birden fazla ajan çalışıyorsa (ör. eskisi açık kalmış) kodumuzu kabul edeni seç; yoksa bulunan ilkini
+  let first = null;
   for (const origin of [...new Set(candidates)]) {
     const info = await hello(origin, true);
-    if (info) {
-      base = origin;
-      agent.info = info;
-      return info;
-    }
+    if (!info) continue;
+    if (info.authorized) { base = origin; agent.info = info; return info; }
+    first ??= { origin, info };
   }
-  base = null;
-  agent.info = null;
-  return null;
+  base = first?.origin ?? null;
+  agent.info = first?.info ?? null;
+  return first?.info ?? null;
 }
 
 export function setToken(t) {

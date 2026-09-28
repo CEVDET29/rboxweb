@@ -70,9 +70,22 @@ function detectRepo() {
   return m && repo ? `${m[1]}/${repo}` : null;
 }
 
-function launchCommand(repo) {
+function launchCommand(repo, token) {
   const url = `https://raw.githubusercontent.com/${repo}/main/tools/start-agent.ps1`;
-  return `powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm ${url}))) -Repo ${repo}"`;
+  return `powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm ${url}))) -Repo ${repo} -Token ${token}"`;
+}
+
+// Bağlantı kodunu bu sayfa üretir ve komuta koyar: ajan bu kodla açılır, açık olan bu sayfa kendiliğinden bağlanır
+// (ajanın yeni bir tarayıcı sekmesi açmasına gerek kalmaz). Aynı sayfa yüklemesinde aynı kod kullanılır.
+let launchToken = null;
+function ensureLaunchToken() {
+  if (!launchToken) {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";           // karışan karakterler yok
+    const bytes = crypto.getRandomValues(new Uint8Array(12));
+    launchToken = [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
+  }
+  setToken(launchToken);
+  return launchToken;
 }
 
 // Masaüstü (WPF) sürümünü C:\Rasyomed\RboxTools'a indirir; yol yoksa oluşturur, hata olursa İndirilenler'e koyar.
@@ -89,7 +102,7 @@ if (repo) {
   $("#cnCopy").addEventListener("click", async (e) => {
     const desktop = e.detail >= 3;
     // Başarıda bildirim yok (istenmedi); yalnızca kopyalanamazsa haber verilir
-    try { await navigator.clipboard.writeText(desktop ? desktopCommand(repo) : launchCommand(repo)); }
+    try { await navigator.clipboard.writeText(desktop ? desktopCommand(repo) : launchCommand(repo, ensureLaunchToken())); }
     catch { toast("Kopyalanamadı."); }
   });
 }
