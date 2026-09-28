@@ -101,7 +101,10 @@ export async function api(path, opts) {
 /** Satır satır akan JSON (ndjson) okur; her satır için onMsg çağrılır. */
 export async function stream(path, body, onMsg, signal) {
   const res = await raw(path, { method: "POST", body, signal });
-  if (!res.ok || !res.body) throw new Error(`Hata ${res.status}`);
+  if (!res.ok || !res.body) {
+    const j = await res.json().catch(() => ({}));       // ajan, akışı başlatmadan önce hatayı JSON olarak döner
+    throw new Error(j.error || `Hata ${res.status}`);
+  }
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = "";

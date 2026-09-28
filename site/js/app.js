@@ -4,10 +4,11 @@ import { agent, discover, setToken, checkToken, api } from "./api.js";
 import { $, esc, sha256Hex, storeGet, storeSet, sessionGet, sessionSet, toast, debounce, ICONS } from "./util.js";
 import { createPing } from "./ping.js";
 import { createYbdb } from "./ybdb.js";
+import { createUpdate } from "./update.js";
 
 const MODULES = [
   { id: "ping", title: "Ping Kontrol", icon: ICONS.ping, sub: "Excel listesindeki cihazlara ping, SSH portu ve MAC kontrolü" },
-  { id: "update", title: "Cihaz Güncelleme", icon: ICONS.update, sub: "SSH ile toplu güncelleme, sürüm kontrolü ve tek cihaz ayarları", soon: true },
+  { id: "update", title: "Cihaz Güncelleme", icon: ICONS.update, sub: "SSH ile toplu güncelleme, sürüm kontrolü ve tek cihaz ayarları" },
   { id: "control", title: "Cihaz Kontrol", icon: ICONS.control, sub: "Cihazların anlık durumu ve toplu işlemler", soon: true },
   { id: "ybdb", title: "YBDB Odalar", icon: ICONS.ybdb, sub: "Oda, yatak ve doluluk durumu" },
   { id: "files", title: "Dosyalar", icon: ICONS.files, sub: "Güncelleme dosyalarını bu hastane için düzenle", soon: true },
@@ -142,6 +143,8 @@ function enterApp() {
   const ctx = { pickDeviceList, loadDeviceFile, flushSsh: () => saveSsh.flush() };
   views.ping = createPing(ctx);
   views.ybdb = createYbdb();
+  views.update = createUpdate(ctx);
+  renderListButton();
   loadSsh();
 
   $("#tabs").innerHTML = MODULES.map((m) =>
@@ -230,18 +233,36 @@ fileInput.addEventListener("change", () => { const f = fileInput.files?.[0]; fil
 
 function pickDeviceList() { fileInput.click(); }
 
+/** Üst banttaki ortak düğme: "Cihaz listesi <dosya adı>" (WPF'teki gibi). */
+function renderListButton() {
+  const name = devices.fileName;
+  $("#btnList").innerHTML = `${ICONS.folder}<span>Cihaz listesi ${name ? `<b>${esc(name)}</b>` : ""}</span>`;
+}
+$("#btnList").addEventListener("click", pickDeviceList);
+
+/** Bir modülde iş sürerken liste değiştirilemez (WPF ile aynı kural). */
+const anyBusy = () => Object.values(views).some((v) => v.isBusy?.());
+
+/** Listeyi, setDevices'ı olan tüm modüllere dağıtır. Modül sonradan oluşturulunca da çağrılır. */
+function distributeDevices() {
+  for (const v of Object.values(views)) v.setDevices?.(devices);
+}
+
 async function loadDeviceFile(file) {
   if (!/\.(xlsx|xls)$/i.test(file.name)) { toast("Yalnızca .xlsx veya .xls dosyaları."); return; }
+  if (anyBusy()) { toast("Bir işlem sürerken cihaz listesi değiştirilemez. İşlem bitince tekrar deneyin."); return; }
   try {
     const res = await api("/api/excel", { method: "POST", body: await file.arrayBuffer(), headers: { "X-File-Name": encodeURIComponent(file.name) } });
     devices.rows = res.rows; devices.fileName = res.fileName;
-    if (views.ping.setDevices(devices)) toast(`${res.rows.length} cihaz yüklendi`);
+    distributeDevices();
+    renderListButton();
+    toast(`${res.rows.length} cihaz yüklendi`);
   } catch (e) {
     toast("Excel okunamadı: " + e.message, 5000);
   }
 }
 
-// Sayfaya sürüklenen dosya (Ping kartı dışında da çalışsın)
+// Sayfaya sürüklenen dosya (sayfanın herhangi bir yerinde çalışır)
 addEventListener("dragover", (e) => e.preventDefault());
 addEventListener("drop", (e) => { e.preventDefault(); const f = e.dataTransfer?.files?.[0]; if (f && !screens.app.hidden) loadDeviceFile(f); });
 

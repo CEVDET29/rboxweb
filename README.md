@@ -19,7 +19,16 @@ Tarayıcı (github.io'dan gelen arayüz) ─► http://127.0.0.1:47800 ─► Rb
 |---|---|
 | Ping Kontrol | ✅ tamam (Excel, ping, SSH portu, ARP/SSH ile MAC, üretici, izleme modu, filtre/arama/sıralama, CSV) |
 | YBDB Odalar | ✅ tamam (SQL Server bağlantısı, doluluk özeti, oda / yatak tabloları, oda seçince süzme, arama, sıralama) |
-| Cihaz Güncelleme, Cihaz Kontrol, Dosyalar | ⏳ sıradaki aşamalar |
+| Cihaz Güncelleme | ✅ tamam (toplu güncelleme, versiyon kontrol, TTY mesajı, tek cihaz JsonSettings / dhcpcd). Adımlar WPF'teki `UpdateCoordinator` ile aynı kod |
+| Cihaz Kontrol, Dosyalar | ⏳ sıradaki aşamalar |
+
+**Ortak cihaz listesi:** Excel, üst banttaki "Cihaz listesi" düğmesinden (ya da sayfaya sürükleyerek) tek yerden yüklenir;
+Ping Kontrol ve Cihaz Güncelleme aynı listeyi kullanır. Bir işlem sürerken liste değiştirilemez.
+
+**updateFiles klasörü:** Cihaz Güncelleme'nin cihaza gönderdiği dosyalar ajanın veri klasöründedir
+(`%AppData%\RboxAgent\updateFiles`). Başka bir klasör için: `RboxAgent.exe --work "C:\Rasyomed\RboxTools\updateFiles"`
+(ya da `agent.json` içinde `"workFolder"`). JsonSettings / serialdevices.json / dhcpcd / wpa_supplicant seçeneklerine
+çift tıklamak (ya da kalem düğmesi) dosyayı **sunucuda** Notepad++ / Not Defteri ile açar; dosya yoksa "yok" rozeti çıkar.
 
 YBDB parolası ajanda yalnızca bellekte tutulur; "Şifreyi hatırla" açıksa DPAPI ile şifreli saklanır. Tarayıcıya geri gönderilmez.
 

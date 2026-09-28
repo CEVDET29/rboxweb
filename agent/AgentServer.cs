@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using RboxAgent.Modules.Ping;
+using RboxAgent.Modules.Update;
 using RboxAgent.Modules.Ybdb;
 
 namespace RboxAgent
@@ -18,7 +19,11 @@ namespace RboxAgent
     /// </summary>
     internal sealed class AgentServer
     {
-        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+        // Enum'lar metin olarak ("Enable", "None"...) gider / gelir
+        private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+        {
+            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+        };
 
         private readonly AgentOptions _o;
         private HttpListener? _listener;
@@ -226,6 +231,107 @@ namespace RboxAgent
                     return;
                 }
 
+                // ── Cihaz Güncelleme ──────────────────────────────────────────
+                case ("GET", "/api/update/info"):
+                    await Reply(res, UpdateService.Info());
+                    return;
+
+                case ("GET", "/api/update/settings"):
+                {
+                    var u = DataStore.Settings.Update;
+                    await Reply(res, u);
+                    return;
+                }
+
+                case ("PUT", "/api/update/settings"):
+                {
+                    var b = await Body<UpdateSettings>(req);
+                    var u = DataStore.Settings.Update;
+                    u.Parallel = Math.Clamp(b.Parallel, 1, 100);
+                    u.TtyText = b.TtyText ?? u.TtyText;
+                    u.Wlan0Mask = b.Wlan0Mask ?? u.Wlan0Mask; u.Wlan0Gateway = b.Wlan0Gateway ?? u.Wlan0Gateway;
+                    u.Eth0Mask = b.Eth0Mask ?? u.Eth0Mask; u.Eth0Gateway = b.Eth0Gateway ?? u.Eth0Gateway;
+                    u.SingleTargetIp = b.SingleTargetIp ?? u.SingleTargetIp; u.SingleServerIp = b.SingleServerIp ?? u.SingleServerIp;
+                    u.SingleEth0Ip = b.SingleEth0Ip ?? u.SingleEth0Ip; u.SingleEth0Mask = b.SingleEth0Mask ?? u.SingleEth0Mask;
+                    u.SingleWlan0Ip = b.SingleWlan0Ip ?? u.SingleWlan0Ip; u.SingleWlan0Mask = b.SingleWlan0Mask ?? u.SingleWlan0Mask;
+                    DataStore.Save();
+                    await Reply(res, new { ok = true });
+                    return;
+                }
+
+                case ("POST", "/api/update/run"):
+                case ("POST", "/api/update/version"):
+                {
+                    bool isRun = path.EndsWith("/run");
+                    if (UpdateService.Credentials() == null) { await Reply(res, new { error = "SSH kullanıcı adı ve şifre girin (üst banttaki SSH düğmesi)." }, 422); return; }
+                    if (!UpdateService.TryBegin()) { await Reply(res, new { error = "Başka bir güncelleme / versiyon kontrolü sürüyor." }, 409); return; }
+
+                    UpdateRunRequest? runReq = null; VersionRequest? verReq = null;
+                    try
+                    {
+                        if (isRun) runReq = await Body<UpdateRunRequest>(req); else verReq = await Body<VersionRequest>(req);
+                    }
+                    catch { UpdateService.End(); await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+
+                    res.StatusCode = 200;
+                    res.ContentType = "application/x-ndjson; charset=utf-8";
+                    res.SendChunked = true;
+                    var sink = new NdjsonSink(res.OutputStream, Json);
+                    string runId = Guid.NewGuid().ToString("N");
+                    try
+                    {
+                        if (isRun) await UpdateService.RunUpdateAsync(runId, runReq!, sink);
+                        else await UpdateService.RunVersionAsync(runId, verReq!, sink);
+                    }
+                    finally
+                    {
+                        UpdateService.End();
+                        await sink.CompleteAsync();
+                        try { res.Close(); } catch { }
+                    }
+                    return;
+                }
+
+                case ("POST", "/api/update/cancel"):
+                    await Reply(res, new { ok = UpdateService.Cancel(req.QueryString["id"] ?? "") });
+                    return;
+
+                case ("POST", "/api/update/tty"):
+                {
+                    var b = await Body<TtyRequest>(req);
+                    if (UpdateService.Credentials() == null) { await Reply(res, new { ok = false, message = "SSH kullanıcı adı ve şifre girin (üst banttaki SSH düğmesi)." }); return; }
+                    if (string.IsNullOrWhiteSpace(b.Ip)) { await Reply(res, new { ok = false, message = "Listeden bir cihaz seçin." }); return; }
+                    if (string.IsNullOrWhiteSpace(b.Text)) { await Reply(res, new { ok = false, message = "Gönderilecek metin boş." }); return; }
+                    var (ok, message) = await UpdateService.SendTtyAsync(b.Ip.Trim(), b.Text);
+                    await Reply(res, new { ok, message });
+                    return;
+                }
+
+                case ("POST", "/api/update/single"):
+                {
+                    var b = await Body<SingleRequest>(req);
+                    string? err = UpdateService.ValidateSingle(b);
+                    if (err == null && UpdateService.Credentials() == null) err = "Kullanıcı adı ve şifre girin (üst banttaki SSH düğmesi).";
+                    if (err != null) { await Reply(res, new { error = err }, 422); return; }
+
+                    res.StatusCode = 200;
+                    res.ContentType = "application/x-ndjson; charset=utf-8";
+                    res.SendChunked = true;
+                    var sink = new NdjsonSink(res.OutputStream, Json);
+                    try { await UpdateService.RunSingleAsync(b, sink); }
+                    finally { await sink.CompleteAsync(); try { res.Close(); } catch { } }
+                    return;
+                }
+
+                case ("POST", "/api/update/open"):
+                {
+                    var b = await Body<OpenRequest>(req);
+                    var (ok, message) = UpdateService.OpenOnServer(b.Kind ?? "", b.Name);
+                    // Hata metni "error" anahtarında gider: arayüz bunu kullanıcıya olduğu gibi gösterir
+                    await Reply(res, ok ? new { ok = true, error = "" } : new { ok = false, error = message }, ok ? 200 : 422);
+                    return;
+                }
+
                 // ── Ping çalıştırma (satır satır akan JSON) ──────────────────
                 case ("POST", "/api/ping/run"):
                 {
@@ -270,6 +376,7 @@ namespace RboxAgent
         }
 
         private sealed class IpIn { public string? Ip { get; set; } }
+        private sealed class OpenRequest { public string? Kind { get; set; } public string? Name { get; set; } }
         private sealed class SshSettingsIn
         {
             public string? User { get; set; }

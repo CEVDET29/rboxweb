@@ -1,0 +1,500 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.RegularExpressions;
+using Renci.SshNet;
+using RboxAgent.Modules.Update.Core;
+using RboxAgent.Modules.Update.Services;
+
+namespace RboxAgent.Modules.Update
+{
+    public sealed record UpdTarget(int Id, string Ip, int? YatakId, string? Wlan0, string? Eth0);
+
+    public sealed class UpdateRunRequest
+    {
+        public List<UpdTarget> Targets { get; set; } = new();
+        public UpdateOptions Options { get; set; } = new();
+        public int Parallel { get; set; } = 10;
+    }
+
+    public sealed class VersionRequest
+    {
+        public List<UpdTarget> Targets { get; set; } = new();
+        public int Parallel { get; set; } = 10;
+    }
+
+    public sealed class TtyRequest
+    {
+        public string? Ip { get; set; }
+        public string? Text { get; set; }
+    }
+
+    public sealed class SingleRequest
+    {
+        public string? TargetIp { get; set; }
+        public bool DoYatak { get; set; }
+        public int YatakId { get; set; }
+        public bool DoServer { get; set; }
+        public string? ServerIp { get; set; }
+        public bool DoEth0 { get; set; }
+        public string? Eth0Ip { get; set; }
+        public string? Eth0Mask { get; set; }
+        public bool DoWlan0 { get; set; }
+        public string? Wlan0Ip { get; set; }
+        public string? Wlan0Mask { get; set; }
+    }
+
+    /// <summary>Cihaz Güncelleme modülünün ajan tarafı (WPF'teki UpdateViewModel'in arayüzsüz karşılığı).</summary>
+    internal static class UpdateService
+    {
+        /// <summary>Güncelleme dosyaları (updateFiles). Ajan başlarken --work / agent.json ile değiştirilebilir.</summary>
+        public static string WorkFolder { get; set; } = Path.Combine(DataStore.Folder, "updateFiles");
+
+        /// <summary>Cihaza gönderilen, sık düzenlenen dosyalar (WPF'tekiyle aynı liste).</summary>
+        public static readonly string[] EditableFiles = { "JsonSettings.txt", "serialdevices.json", "wpa_supplicant.txt", "dhcpcd.txt" };
+
+        private static readonly ConcurrentDictionary<string, CancellationTokenSource> Runs = new();
+        private static int _busy;   // toplu güncelleme ya da versiyon kontrolü sürerken 1
+
+        public static bool Cancel(string runId)
+        {
+            if (!Runs.TryGetValue(runId, out var cts)) return false;
+            try { cts.Cancel(); } catch (ObjectDisposedException) { }
+            return true;
+        }
+
+        public static bool IsBusy => Volatile.Read(ref _busy) == 1;
+        private static bool TryEnter() => Interlocked.CompareExchange(ref _busy, 1, 0) == 0;
+        private static void Leave() => Volatile.Write(ref _busy, 0);
+
+        /// <summary>SSH kullanıcı / parola (tüm modüller için ortak ayar). Boşsa null.</summary>
+        public static (string user, string pass)? Credentials()
+        {
+            var s = DataStore.Settings.Ssh;
+            string user = s.User.Trim();
+            string pass = DataStore.Unprotect(s.PassProtected);
+            return string.IsNullOrWhiteSpace(user) || pass.Length == 0 ? null : (user, pass);
+        }
+
+        // ── Yardımcılar ──────────────────────────────────────────────────
+
+        private static string EscapeForDoubleQuotes(string s) =>
+            s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("$", "\\$").Replace("`", "\\`");
+
+        /// <summary>Ekrana / günlüğe giden metinde SSH parolası varsa "****" yapar (kabuk için kaçışlanmış biçimler dahil).</summary>
+        private static Func<string?, string> MakeRedact(string pass) => s =>
+        {
+            if (string.IsNullOrEmpty(s) || string.IsNullOrEmpty(pass)) return s ?? "";
+            return s.Replace(EscapeForDoubleQuotes(pass), "****")
+                    .Replace(pass.Replace("'", "'\\''"), "****")
+                    .Replace(pass, "****");
+        };
+
+        private sealed class Reporter : IStatusReporter
+        {
+            private readonly NdjsonSink _sink;
+            private readonly Func<string?, string> _redact;
+            public Reporter(NdjsonSink sink, Func<string?, string> redact) { _sink = sink; _redact = redact; }
+
+            public void Set(string ip, string message, StatusKind kind = StatusKind.Info, string? timestamp = null) =>
+                _sink.Emit(new
+                {
+                    type = "log",
+                    time = timestamp ?? DateTime.Now.ToString("HH:mm:ss"),
+                    ip = ip ?? "",
+                    message = _redact(message),
+                    kind = kind.ToString().ToLowerInvariant(),
+                });
+        }
+
+        private static async Task<bool> IsSshReachableAsync(string ip, int port, int timeoutMs, CancellationToken ct)
+        {
+            try
+            {
+                using var tcp = new TcpClient();
+                var conn = tcp.ConnectAsync(ip, port);
+                var delay = Task.Delay(timeoutMs, ct);
+                if (await Task.WhenAny(conn, delay) == delay) return false;
+                ct.ThrowIfCancellationRequested();
+                return tcp.Connected;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { return false; }
+        }
+
+        // ── Toplu güncelleme ─────────────────────────────────────────────
+
+        /// <summary>false: başka bir toplu işlem sürüyor.</summary>
+        public static bool TryBegin() => TryEnter();
+        public static void End() => Leave();
+
+        public static async Task RunUpdateAsync(string runId, UpdateRunRequest req, NdjsonSink sink)
+        {
+            var (user, pass) = Credentials()!.Value;
+            var redact = MakeRedact(pass);
+            var reporter = new Reporter(sink, redact);
+            var logger = new FileReportLogger(reporter, WorkFolder) { Redact = s => redact(s) };
+            var coordinator = new UpdateCoordinator(WorkFolder, reporter, logger);
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(sink.Broken);
+            Runs[runId] = cts;
+            var ct = cts.Token;
+            int parallel = Math.Clamp(req.Parallel, 1, 100);
+            int total = req.Targets.Count, done = 0;
+
+            sink.Emit(new { type = "start", runId, total });
+            reporter.Set("", $"Güncelleme başladı... ({total} cihaz, {parallel} paralel)");
+
+            void Progress() => sink.Emit(new { type = "progress", done = Interlocked.Increment(ref done), total });
+
+            try
+            {
+                using var sem = new SemaphoreSlim(parallel);
+                await Task.WhenAll(req.Targets.Select(async t =>
+                {
+                    try { await sem.WaitAsync(ct); }
+                    catch (OperationCanceledException)
+                    {
+                        sink.Emit(new { type = "targetCancelled", id = t.Id });
+                        Progress();
+                        return;
+                    }
+                    try
+                    {
+                        if (ct.IsCancellationRequested) { sink.Emit(new { type = "targetCancelled", id = t.Id }); return; }
+                        sink.Emit(new { type = "targetStart", id = t.Id });
+                        bool ok = await coordinator.UpdateSingleIpAsync(t.Ip, user, pass, req.Options, t.YatakId, Blank(t.Wlan0), Blank(t.Eth0), ct);
+                        sink.Emit(new { type = "targetResult", id = t.Id, ok });
+                        await logger.AppendAsync(string.Empty);
+                    }
+                    catch (OperationCanceledException) { sink.Emit(new { type = "targetResult", id = t.Id, ok = false }); }
+                    catch (Exception ex)
+                    {
+                        sink.Emit(new { type = "targetResult", id = t.Id, ok = false });
+                        reporter.Set(t.Ip, "Hata: " + ex.Message, StatusKind.Error);
+                    }
+                    finally
+                    {
+                        sem.Release();
+                        Progress();
+                    }
+                }));
+            }
+            catch (Exception ex)
+            {
+                reporter.Set("", "Beklenmeyen hata: " + ex.Message, StatusKind.Error);
+            }
+            finally
+            {
+                bool cancelled = ct.IsCancellationRequested;
+                Runs.TryRemove(runId, out _);
+                await logger.AppendAsync(cancelled ? "İptal edildi!" : "Tüm cihazlar işlendi.");
+                reporter.Set("", cancelled ? "Güncelleme iptal edildi." : "Güncelleme tamamlandı.",
+                    cancelled ? StatusKind.Warn : StatusKind.Success);
+                sink.Emit(new { type = "done", cancelled });
+            }
+        }
+
+        private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+        // ── Versiyon kontrol ─────────────────────────────────────────────
+
+        public static async Task RunVersionAsync(string runId, VersionRequest req, NdjsonSink sink)
+        {
+            var (user, pass) = Credentials()!.Value;
+            var redact = MakeRedact(pass);
+            var reporter = new Reporter(sink, redact);
+            var logger = new FileReportLogger(reporter, WorkFolder) { Redact = s => redact(s) };
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(sink.Broken);
+            Runs[runId] = cts;
+            var ct = cts.Token;
+            int parallel = Math.Clamp(req.Parallel, 1, 100);
+            int total = req.Targets.Count, done = 0;
+
+            sink.Emit(new { type = "start", runId, total });
+            reporter.Set("", $"Versiyon kontrolü başladı... ({total} cihaz, {parallel} paralel)");
+
+            void Ver(int id, string text, string sev) => sink.Emit(new { type = "version", id, text, sev });
+
+            try
+            {
+                using var sem = new SemaphoreSlim(parallel);
+                await Task.WhenAll(req.Targets.Select(async t =>
+                {
+                    try { await sem.WaitAsync(ct); }
+                    catch (OperationCanceledException) { return; }
+                    try
+                    {
+                        if (ct.IsCancellationRequested) return;
+                        string ip = t.Ip;
+                        Ver(t.Id, "Kontrol...", "info");
+
+                        if (!await IsSshReachableAsync(ip, 22, 3000, ct)) { Ver(t.Id, "SSH yok", "muted"); return; }
+
+                        var updater = new SshUpdater(ip, user, pass, WorkFolder, logger.LogAsync);
+                        try
+                        {
+                            using var client = await Task.Run(() => updater.Connect(5), ct);
+                            if (!client.IsConnected) { Ver(t.Id, "SSH bağlanamadı", "muted"); return; }
+
+                            var (ok, stdout, _) = await updater.ExecuteSudoGetOutputAsync(client,
+                                "dotnet /var/www/consoleApps/publish/SerialWorkerServiceVol61.dll --version", ip, ct, 5);
+
+                            string text = ok ? (stdout?.Trim() is { Length: > 0 } s ? s : "(boş)") : "Hata";
+                            Ver(t.Id, text, ok ? "ok" : "error");
+                            reporter.Set(ip, ok ? "Versiyon: " + text : "Versiyon okunamadı.", ok ? StatusKind.Success : StatusKind.Error);
+                        }
+                        finally { updater.CleanupTempFolder(); }
+                    }
+                    catch (OperationCanceledException) { Ver(t.Id, "İptal", "muted"); }
+                    catch (Exception ex) { Ver(t.Id, "Hata: " + redact(ex.Message), "error"); }
+                    finally
+                    {
+                        sem.Release();
+                        sink.Emit(new { type = "progress", done = Interlocked.Increment(ref done), total });
+                    }
+                }));
+                if (ct.IsCancellationRequested) reporter.Set("", "Versiyon kontrolü iptal edildi.", StatusKind.Warn);
+            }
+            finally
+            {
+                Runs.TryRemove(runId, out _);
+                sink.Emit(new { type = "done", cancelled = ct.IsCancellationRequested });
+            }
+        }
+
+        // ── TTY mesajı ───────────────────────────────────────────────────
+
+        public static async Task<(bool ok, string message)> SendTtyAsync(string ip, string text)
+        {
+            var (user, pass) = Credentials()!.Value;
+            try
+            {
+                var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(text + "\n"));
+                bool ok = await Task.Run(() =>
+                {
+                    using var ssh = new SshClient(ip, user, pass);
+                    ssh.ConnectionInfo.Timeout = TimeSpan.FromSeconds(10);
+                    ssh.Connect();
+                    string pwdEsc = EscapeForDoubleQuotes(pass);
+                    string cmd = $"echo \"{pwdEsc}\" | sudo -S bash -lc " +
+                                 $"'echo \"{b64}\" | base64 -d | tee /dev/tty0 > /dev/null " +
+                                 $"|| echo \"{b64}\" | base64 -d | tee /dev/tty1 > /dev/null'";
+                    var res = ssh.RunCommand(cmd);
+                    ssh.Disconnect();
+                    return res.ExitStatus == 0;
+                });
+                return (ok, ok ? "TTY'ye yazıldı." : "Komut başarısız.");
+            }
+            // Zaman aşımı mesajı komut metnini (şifre dahil) içerir; kendi mesajımızı yaz
+            catch (Renci.SshNet.Common.SshOperationTimeoutException) { return (false, "Hata: TTY komutu zaman aşımına uğradı."); }
+            catch (Exception ex) { return (false, "Hata: " + MakeRedact(pass)(ex.Message)); }
+        }
+
+        // ── Tek cihaz: JsonSettings / dhcpcd ─────────────────────────────
+
+        public static string? ValidateSingle(SingleRequest r)
+        {
+            static bool Ipv4(string? ip)
+            {
+                if (string.IsNullOrWhiteSpace(ip)) return false;
+                var p = ip.Trim().Split('.');
+                return p.Length == 4 && p.All(x => x.Length is > 0 and <= 3 && x.All(char.IsDigit) && int.Parse(x) <= 255);
+            }
+
+            if (!Ipv4(r.TargetIp)) return "Geçerli bir hedef cihaz IP adresi girin.";
+            if (!r.DoYatak && !r.DoServer && !r.DoEth0 && !r.DoWlan0) return "En az bir alan seçin.";
+            if (r.DoServer && !Ipv4(r.ServerIp)) return "Server IP geçersiz.";
+            if (r.DoEth0 && !Ipv4(r.Eth0Ip)) return "eth0 IP adresi geçersiz.";
+            if (r.DoWlan0 && !Ipv4(r.Wlan0Ip)) return "wlan0 IP adresi geçersiz.";
+            if (r.DoEth0 && !DhcpcdHelper.TryParseMaskOrCidr((r.Eth0Mask ?? "").Trim(), out _, out string e1)) return $"eth0 ağ maskesi geçersiz: {e1}";
+            if (r.DoWlan0 && !DhcpcdHelper.TryParseMaskOrCidr((r.Wlan0Mask ?? "").Trim(), out _, out string e2)) return $"wlan0 ağ maskesi geçersiz: {e2}";
+            return null;
+        }
+
+        public static async Task RunSingleAsync(SingleRequest r, NdjsonSink sink)
+        {
+            var (user, pass) = Credentials()!.Value;
+            var redact = MakeRedact(pass);
+            string targetIp = r.TargetIp!.Trim();
+            // SshUpdater'ın kendi mesajları da (bağlantı, sudo vb.) bu günlüğe düşsün
+            var logger = new FileReportLogger(new Reporter(sink, redact), WorkFolder) { Redact = s => redact(s) };
+
+            void Log(string message, StatusKind kind = StatusKind.Info) =>
+                sink.Emit(new
+                {
+                    type = "log",
+                    time = DateTime.Now.ToString("HH:mm:ss"),
+                    ip = "",
+                    message = redact(message),
+                    kind = kind.ToString().ToLowerInvariant(),
+                });
+
+            bool success = false;
+            try
+            {
+                Log($"SSH bağlantısı kuruluyor: {targetIp}");
+                var updater = new SshUpdater(targetIp, user, pass, WorkFolder, logger.LogAsync);
+                try
+                {
+                    using var client = await Task.Run(() => updater.Connect(8));
+                    if (!client.IsConnected) { Log("SSH bağlantısı başarısız.", StatusKind.Error); return; }
+
+                    if ((r.DoYatak || r.DoServer) && !await UpdateJsonSettingsAsync(client, updater, targetIp, r, Log)) return;
+                    if ((r.DoEth0 || r.DoWlan0) && !await UpdateDhcpcdAsync(client, updater, targetIp, r, Log)) return;
+
+                    Log("İşlem tamamlandı.", StatusKind.Success);
+                    success = true;
+                }
+                finally { updater.CleanupTempFolder(); }
+            }
+            catch (Exception ex) { Log("Hata: " + ex.Message, StatusKind.Error); }
+            finally { sink.Emit(new { type = "done", ok = success }); }
+        }
+
+        private static async Task<bool> UpdateJsonSettingsAsync(SshClient client, SshUpdater updater, string ip, SingleRequest r,
+                                                                 Action<string, StatusKind> log)
+        {
+            const string remotePath = "/var/www/consoleApps/publish/JsonSettings.json";
+            var (okRead, stdout, stderr) = await updater.ExecuteSudoGetOutputAsync(client, $"cat {remotePath}", ip, CancellationToken.None, 10);
+            if (!okRead)
+            {
+                log("JsonSettings.json okunamadı: " + (string.IsNullOrWhiteSpace(stderr) ? "Bilinmeyen hata" : stderr.Trim()), StatusKind.Error);
+                return false;
+            }
+
+            string json = stdout ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(json)) { log("JsonSettings.json boş geldi.", StatusKind.Error); return false; }
+
+            if (r.DoYatak)
+            {
+                string yatakId = r.YatakId.ToString();
+                if (Regex.IsMatch(json, "\"YatakId\"\\s*:\\s*\\d+", RegexOptions.IgnoreCase))
+                    json = Regex.Replace(json, "(\"YatakId\"\\s*:\\s*)\\d+", m => m.Groups[1].Value + yatakId, RegexOptions.IgnoreCase);
+                else { log("JsonSettings.json içinde YatakId alanı bulunamadı.", StatusKind.Error); return false; }
+                log("YatakId güncellenecek: " + yatakId, StatusKind.Info);
+            }
+
+            if (r.DoServer)
+            {
+                string serverIp = (r.ServerIp ?? "").Trim();
+                if (Regex.IsMatch(json, "\"ServerIp\"\\s*:\\s*\"[^\"]*\"", RegexOptions.IgnoreCase))
+                    json = Regex.Replace(json, "(\"ServerIp\"\\s*:\\s*\")([^\"]*)(\")", m => m.Groups[1].Value + serverIp + m.Groups[3].Value, RegexOptions.IgnoreCase);
+                else { log("JsonSettings.json içinde ServerIp alanı bulunamadı.", StatusKind.Error); return false; }
+                log("ServerIp güncellenecek: " + serverIp, StatusKind.Info);
+            }
+
+            const string destCmd = "[ -f /var/www/consoleApps/publish/JsonSettings.json ] && cp -a /var/www/consoleApps/publish/JsonSettings.json /var/www/consoleApps/publish/JsonSettings.json.bak.$(date +%s) || true && install -m 0644 -o root -g root /tmp/JsonSettings.json /var/www/consoleApps/publish/JsonSettings.json";
+            bool okWrite = await updater.CopyTextContentWithSudoAsync(client, json, $"JsonSettings_{ip}.json", "/tmp/JsonSettings.json", destCmd, ip, CancellationToken.None);
+            log(okWrite ? "JsonSettings.json güncellendi." : "JsonSettings.json güncellenemedi.", okWrite ? StatusKind.Success : StatusKind.Error);
+            return okWrite;
+        }
+
+        private static async Task<bool> UpdateDhcpcdAsync(SshClient client, SshUpdater updater, string ip, SingleRequest r,
+                                                           Action<string, StatusKind> log)
+        {
+            const string remotePath = "/etc/dhcpcd.conf";
+            var (okRead, stdout, stderr) = await updater.ExecuteSudoGetOutputAsync(client, $"cat {remotePath}", ip, CancellationToken.None, 10);
+            if (!okRead)
+            {
+                log("dhcpcd.conf okunamadı: " + (string.IsNullOrWhiteSpace(stderr) ? "Bilinmeyen hata" : stderr.Trim()), StatusKind.Error);
+                return false;
+            }
+
+            string conf = stdout ?? string.Empty;
+
+            if (r.DoEth0)
+            {
+                conf = DhcpcdHelper.UpsertDhcpcdInterface(conf, "eth0", (r.Eth0Ip ?? "").Trim(), (r.Eth0Mask ?? "").Trim());
+                log($"eth0 -> {(r.Eth0Ip ?? "").Trim()}  mask={(r.Eth0Mask ?? "").Trim()}", StatusKind.Info);
+            }
+
+            if (r.DoWlan0)
+            {
+                conf = DhcpcdHelper.UpsertDhcpcdInterface(conf, "wlan0", (r.Wlan0Ip ?? "").Trim(), (r.Wlan0Mask ?? "").Trim());
+                log($"wlan0 -> {(r.Wlan0Ip ?? "").Trim()}  mask={(r.Wlan0Mask ?? "").Trim()}", StatusKind.Info);
+            }
+
+            const string destCmd = "[ -f /etc/dhcpcd.conf ] && cp -a /etc/dhcpcd.conf /etc/dhcpcd.conf.bak.$(date +%s) || true && install -m 0644 -o root -g root /tmp/dhcpcd.conf /etc/dhcpcd.conf";
+            bool okWrite = await updater.CopyTextContentWithSudoAsync(client, conf, $"dhcpcd_{ip}.conf", "/tmp/dhcpcd.conf", destCmd, ip, CancellationToken.None);
+            if (!okWrite) { log("dhcpcd.conf yazılamadı.", StatusKind.Error); return false; }
+
+            var (okRestart, msgRestart) = await updater.ExecuteSudoChainAsync(client, new[]
+            {
+                "systemctl restart dhcpcd || service dhcpcd restart || true"
+            }, ip, CancellationToken.None);
+
+            log(okRestart ? "dhcpcd.conf güncellendi." : $"dhcpcd restart uyarısı: {msgRestart}", okRestart ? StatusKind.Success : StatusKind.Warn);
+            return true;
+        }
+
+        // ── Dosyalar: bilgi ve "sunucuda aç" ─────────────────────────────
+
+        public static object Info()
+        {
+            Directory.CreateDirectory(WorkFolder);
+            var files = new DirectoryInfo(WorkFolder).EnumerateFiles()
+                .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(f => new { name = f.Name, size = f.Length, modified = f.LastWriteTime.ToString("dd.MM.yyyy HH:mm") }).ToList();
+            return new { workFolder = WorkFolder, editable = EditableFiles, files };
+        }
+
+        /// <summary>Dosyayı / klasörü SUNUCUDA açar (AnyDesk'te ekranda görünür). Yalnızca izinli adlar.</summary>
+        public static (bool ok, string message) OpenOnServer(string kind, string? name)
+        {
+            try
+            {
+                Directory.CreateDirectory(WorkFolder);
+                switch (kind)
+                {
+                    case "folder":
+                        Process.Start(new ProcessStartInfo(WorkFolder) { UseShellExecute = true });
+                        return (true, "");
+                    case "report":
+                    {
+                        string p = Path.Combine(WorkFolder, "Güncelleme Raporu.txt");
+                        if (!File.Exists(p)) return (false, "Rapor dosyası bulunamadı.");
+                        OpenInEditor(p);
+                        return (true, "");
+                    }
+                    case "file":
+                    {
+                        if (name == null || !EditableFiles.Contains(name, StringComparer.OrdinalIgnoreCase)) return (false, "İzin verilmeyen dosya.");
+                        string p = Path.Combine(WorkFolder, name);
+                        if (!File.Exists(p)) return (false, $"{name} updateFiles klasöründe yok.");
+                        OpenInEditor(p);
+                        return (true, "");
+                    }
+                }
+                return (false, "Bilinmeyen istek.");
+            }
+            catch (Exception ex) { return (false, "Açılamadı: " + ex.Message); }
+        }
+
+        /// <summary>Notepad++ kuruluysa onunla, değilse Not Defteri'yle (WPF ile aynı mantık).</summary>
+        private static void OpenInEditor(string path)
+        {
+            string quoted = $"\"{path}\"";
+            if (FindNotepadPlusPlus() is { } npp)
+            {
+                try { Process.Start(new ProcessStartInfo(npp, quoted) { UseShellExecute = false }); return; } catch { }
+            }
+            Process.Start(new ProcessStartInfo("notepad.exe", quoted) { UseShellExecute = true });
+        }
+
+        private static string? FindNotepadPlusPlus()
+        {
+            var candidates = new List<string?>
+            {
+                Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\notepad++.exe", null, null) as string,
+                Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\notepad++.exe", null, null) as string,
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Notepad++", "notepad++.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Notepad++", "notepad++.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Notepad++", "notepad++.exe"),
+            };
+            return candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c) && File.Exists(c));
+        }
+    }
+}

@@ -20,6 +20,8 @@ namespace RboxAgent
         public string? SiteFolder { get; private set; }
         public bool OpenBrowser { get; private set; } = true;
         public string? OpenUrl { get; private set; }
+        /// <summary>Cihaz Güncelleme dosyalarının klasörü (updateFiles). Boşsa %AppData%\RboxAgent\updateFiles.</summary>
+        public string? WorkFolder { get; private set; }
 
         public static AgentOptions Parse(string[] args)
         {
@@ -37,6 +39,7 @@ namespace RboxAgent
                     if (cfg.Port is int p) o.Port = p;
                     if (cfg.AllowedOrigins != null) o.AllowedOrigins.AddRange(cfg.AllowedOrigins);
                     if (!string.IsNullOrWhiteSpace(cfg.OpenUrl)) o.OpenUrl = cfg.OpenUrl;
+                    if (!string.IsNullOrWhiteSpace(cfg.WorkFolder)) o.WorkFolder = cfg.WorkFolder;
                 }
                 catch { /* bozuk dosya yok sayılır */ }
             }
@@ -52,6 +55,7 @@ namespace RboxAgent
                     case "--token": if (Next() is { } t) o.Token = t; break;
                     case "--site": o.SiteFolder = Next(); break;
                     case "--open": o.OpenUrl = Next(); break;
+                    case "--work": o.WorkFolder = Next(); break;
                     case "--no-browser": o.OpenBrowser = false; break;
                 }
             }
@@ -78,6 +82,7 @@ namespace RboxAgent
             public int? Port { get; set; }
             public List<string>? AllowedOrigins { get; set; }
             public string? OpenUrl { get; set; }
+            public string? WorkFolder { get; set; }
         }
     }
 
@@ -89,6 +94,7 @@ namespace RboxAgent
             Console.Title = "RasyoBOX Ajan";
 
             var opts = AgentOptions.Parse(args);
+            if (!string.IsNullOrWhiteSpace(opts.WorkFolder)) RboxAgent.Modules.Update.UpdateService.WorkFolder = Path.GetFullPath(opts.WorkFolder);
             var server = new AgentServer(opts);
             try { server.Start(); }
             catch (Exception ex)

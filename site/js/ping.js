@@ -72,15 +72,11 @@ export function createPing(ctx) {
   // ── İskelet ─────────────────────────────────────────────────
   root.innerHTML = `
     <section class="card">
-      <div class="card-h">Cihaz listesi ve kontrol</div>
+      <div class="card-h">Kontrol</div>
       <div class="card-b">
         <div class="row">
-          <div class="drop" id="pDrop">
-            <div class="row tight">
-              <button class="btn" id="pPick">${ICONS.folder} Excel seç</button>
-              <div><b id="pFile">Liste seçilmedi</b><div class="sm muted" id="pFileSub">.xlsx / .xls — IP sütunu olan bir sayfa (dosyayı buraya sürükleyebilirsiniz)</div></div>
-            </div>
-          </div>
+          <div style="flex:1;min-width:240px"><b id="pFile">Cihaz listesi seçilmedi</b>
+            <div class="sm muted" id="pFileSub">Üst banttaki "Cihaz listesi" düğmesinden Excel seçin (tüm modüller aynı listeyi kullanır).</div></div>
           <button class="btn primary" id="pStart">${ICONS.play} <span>Kontrolü başlat</span></button>
           <button class="btn" id="pExport">${ICONS.down} CSV</button>
         </div>
@@ -111,7 +107,8 @@ export function createPing(ctx) {
         <input type="search" id="pSearch" placeholder="Ara: oda, yatak, IP, MAC…  (Ctrl+F)" style="width:340px;max-width:100%">
         <span class="sm muted" id="pCount"></span>
       </div>
-      <div class="table-wrap"><table>
+      <div class="table-wrap"><table class="fixed" style="min-width:1240px">
+        <colgroup><col style="width:120px"><col style="width:80px"><col style="width:130px"><col style="width:150px"><col style="width:96px"><col style="width:80px"><col style="width:170px"><col><col style="width:150px"><col style="width:132px"></colgroup>
         <thead><tr id="pHead"></tr></thead>
         <tbody id="pBody"></tbody>
       </table></div>
@@ -119,7 +116,7 @@ export function createPing(ctx) {
 
   const q = (id) => $("#" + id, root);
   const el = {
-    drop: q("pDrop"), pick: q("pPick"), file: q("pFile"), fileSub: q("pFileSub"),
+    file: q("pFile"), fileSub: q("pFileSub"),
     start: q("pStart"), export: q("pExport"), bar: q("pBar"), status: q("pStatus"),
     ssh: q("oSsh"), mac: q("oMac"), vendor: q("oVendor"), fallback: q("oFallback"),
     monitor: q("oMonitor"), monitorText: q("oMonitorText"),
@@ -166,16 +163,11 @@ export function createPing(ctx) {
     fileName = devices.fileName;
     lastRunInfo = "";
     el.file.textContent = fileName;
-    el.fileSub.textContent = `${rows.length} cihaz · ${rooms.length} grup`;
+    el.fileSub.textContent = `${rows.length} cihaz · ${rooms.length} grup · değiştirmek için üst banttaki "Cihaz listesi" düğmesini kullanın`;
     stopMonitorIfEmpty();
     render();
     return true;
   }
-
-  el.pick.addEventListener("click", () => ctx.pickDeviceList());
-  ["dragenter", "dragover"].forEach((e) => el.drop.addEventListener(e, (ev) => { ev.preventDefault(); el.drop.classList.add("over"); }));
-  ["dragleave", "drop"].forEach((e) => el.drop.addEventListener(e, () => el.drop.classList.remove("over")));
-  el.drop.addEventListener("drop", (ev) => { ev.preventDefault(); const f = ev.dataTransfer?.files?.[0]; if (f) ctx.loadDeviceFile(f); });
 
   // ── Kontrol çalıştırma ──────────────────────────────────────
   const optKey = () => `${el.ssh.checked}|${el.mac.checked}|${el.fallback.checked}`;
@@ -238,7 +230,7 @@ export function createPing(ctx) {
       if (runId) api("/api/ping/cancel?id=" + runId, { method: "POST" }).catch(() => {});
       return;
     }
-    if (rows.length === 0) { toast("Önce bir Excel dosyası seçin."); return; }
+    if (rows.length === 0) { toast("Önce üst banttaki \"Cihaz listesi\" düğmesinden bir Excel dosyası seçin."); return; }
     runChecks(rows, true);
   }
   el.start.addEventListener("click", startStop);
@@ -433,7 +425,6 @@ export function createPing(ctx) {
     el.start.innerHTML = running ? `${ICONS.stop} <span>Durdur</span>` : `${ICONS.play} <span>Kontrolü başlat</span>`;
     el.start.classList.toggle("danger", running);
     el.start.classList.toggle("primary", !running);
-    el.pick.disabled = running;
     el.bar.style.width = total ? `${Math.round((done / total) * 100)}%` : "0";
     updateStatus();
   }
@@ -444,6 +435,7 @@ export function createPing(ctx) {
   return {
     root,
     onShow: loadSettings,
+    isBusy: () => running,
     setDevices,
   };
 }

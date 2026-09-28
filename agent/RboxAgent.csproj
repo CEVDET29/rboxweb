@@ -8,7 +8,7 @@
     <AssemblyName>RboxAgent</AssemblyName>
     <Product>RasyoBOX Ajan</Product>
     <Company>Rasyomed</Company>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <!-- Yalnızca temel .NET 8 çalışma zamanı gerekir (ASP.NET Core gerekmez): HttpListener kullanılır. -->
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- Ajan yalnızca Windows'ta çalışır (DPAPI, SendARP) -->

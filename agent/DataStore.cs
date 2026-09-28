@@ -83,6 +83,27 @@ namespace RboxAgent
         public SshSettings Ssh { get; set; } = new();
         public PingSettings Ping { get; set; } = new();
         public YbdbSettings Ybdb { get; set; } = new();
+        public UpdateSettings Update { get; set; } = new();
+    }
+
+    /// <summary>Cihaz Güncelleme ayarları (WPF'teki UpdateSettings ile aynı alanlar; SSH bilgisi ortak bölümde).</summary>
+    public sealed class UpdateSettings
+    {
+        public int Parallel { get; set; } = 10;
+        public string TtyText { get; set; } = "Rasyobox SSH Update Service";
+
+        public string Wlan0Mask { get; set; } = "255.255.255.0";
+        public string Wlan0Gateway { get; set; } = "192.168.1.1";
+        public string Eth0Mask { get; set; } = "255.255.255.0";
+        public string Eth0Gateway { get; set; } = "192.168.1.1";
+
+        // Tek cihaz sekmesi
+        public string SingleTargetIp { get; set; } = "172.16.154.254";
+        public string SingleServerIp { get; set; } = "172.16.154.1";
+        public string SingleEth0Ip { get; set; } = "172.16.154.254";
+        public string SingleEth0Mask { get; set; } = "255.255.255.0";
+        public string SingleWlan0Ip { get; set; } = "192.168.1.100";
+        public string SingleWlan0Mask { get; set; } = "255.255.255.0";
     }
 
     public sealed class YbdbSettings
