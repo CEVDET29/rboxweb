@@ -1,0 +1,5 @@
+agent/bin/
+agent/obj/
+dist/
+*.user
+.vs/

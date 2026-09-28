@@ -58,6 +58,14 @@ async function connectFlow() {
 
 $("#cnRetry").addEventListener("click", connectFlow);
 
+// Kod kutusu: konsoldan kopyalanan boşlukları / fazlalıkları temizler, ABC-123 biçimine getirir,
+// 6 karakter tamamlanınca kendiliğinden bağlanır.
+$("#cnToken").addEventListener("input", (e) => {
+  const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  e.target.value = raw.length > 3 ? `${raw.slice(0, 3)}-${raw.slice(3)}` : raw;
+  if (raw.length === 6) $("#cnCode").requestSubmit();
+});
+
 $("#cnCode").addEventListener("submit", async (e) => {
   e.preventDefault();
   setToken($("#cnToken").value);
