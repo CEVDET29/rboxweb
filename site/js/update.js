@@ -308,11 +308,14 @@ export function createUpdate(ctx) {
   q("uParPlus").addEventListener("click", () => setPar(cfg.parallel + 1));
 
   // ── Sekmeler ────────────────────────────────────────────────
-  root.addEventListener("click", (e) => {
-    const t = e.target.closest("[data-tab]"); if (!t) return;
-    tab = t.dataset.tab;
+  function setTab(t) {
+    tab = t;
     $$("[data-tab]", root).forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
     el.batch.hidden = tab !== "batch"; el.single.hidden = tab !== "single";
+  }
+  root.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-tab]");
+    if (t) setTab(t.dataset.tab);
   });
 
   // ── Seçenekler ──────────────────────────────────────────────
@@ -409,6 +412,22 @@ export function createUpdate(ctx) {
     log(skipped === 0 ? `${added} cihaz yüklendi.` : `${added} cihaz yüklendi (${skipped} satır geçersiz / tekrarlı IP, atlandı).`);
     render();
     return true;
+  }
+
+  /**
+   * Cihaz Kontrol'deki "Güncelle" düğmesi: yalnızca bu IP işaretli kalır, satır seçilir ve odası açılır.
+   * (Diğer işaretler kaldırılır ki yanlışlıkla başka cihazlar da güncellenmesin.)
+   */
+  function focusTarget(ip) {
+    const r = rowByIp(ip);
+    if (!r) { log("Bu IP güncelleme listesinde yok.", "warn", ip); return; }
+    if (isBusy()) log("İşlem sürerken işaretler değiştirilemez; satır yalnızca seçildi.", "warn", ip);
+    else { rows.forEach((x) => { x.checked = x === r; }); log("Cihaz Kontrol'den seçildi; yalnızca bu cihaz işaretli.", "info", ip); }
+    setTab("batch");
+    rooms[r.room].collapsed = false;
+    selected = new Set([r.id]); lastClicked = r.id;
+    render();
+    $(`tr[data-id="${r.id}"]`, el.body)?.scrollIntoView({ block: "nearest" });
   }
 
   function addIp() {
@@ -726,5 +745,6 @@ export function createUpdate(ctx) {
     onShow: loadSettings,
     isBusy,
     setDevices,
+    focusTarget,
   };
 }

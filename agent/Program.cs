@@ -94,7 +94,7 @@ namespace RboxAgent
             Console.Title = "RasyoBOX Ajan";
 
             var opts = AgentOptions.Parse(args);
-            if (!string.IsNullOrWhiteSpace(opts.WorkFolder)) RboxAgent.Modules.Update.UpdateService.WorkFolder = Path.GetFullPath(opts.WorkFolder);
+            if (!string.IsNullOrWhiteSpace(opts.WorkFolder)) RboxAgent.Modules.Update.UpdateService.ExplicitFolder = Path.GetFullPath(opts.WorkFolder);
             var server = new AgentServer(opts);
             try { server.Start(); }
             catch (Exception ex)

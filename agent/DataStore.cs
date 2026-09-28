@@ -89,6 +89,8 @@ namespace RboxAgent
     /// <summary>Cihaz Güncelleme ayarları (WPF'teki UpdateSettings ile aynı alanlar; SSH bilgisi ortak bölümde).</summary>
     public sealed class UpdateSettings
     {
+        /// <summary>Arayüzden seçilen updateFiles klasörü (boş: otomatik). Bkz. UpdateService.WorkFolder.</summary>
+        public string? WorkFolder { get; set; }
         public int Parallel { get; set; } = 10;
         public string TtyText { get; set; } = "Rasyobox SSH Update Service";
 

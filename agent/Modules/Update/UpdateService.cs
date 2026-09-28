@@ -48,8 +48,50 @@ namespace RboxAgent.Modules.Update
     /// <summary>Cihaz Güncelleme modülünün ajan tarafı (WPF'teki UpdateViewModel'in arayüzsüz karşılığı).</summary>
     internal static class UpdateService
     {
-        /// <summary>Güncelleme dosyaları (updateFiles). Ajan başlarken --work / agent.json ile değiştirilebilir.</summary>
-        public static string WorkFolder { get; set; } = Path.Combine(DataStore.Folder, "updateFiles");
+        /// <summary>WPF uygulamasının varsayılan kurulum yeri: varsa web sürümü de aynı updateFiles klasörünü kullanır.</summary>
+        public const string WpfFolder = @"C:\Rasyomed\RboxTools\updateFiles";
+
+        public static string DefaultFolder => Path.Combine(DataStore.Folder, "updateFiles");
+
+        /// <summary>Komut satırı (--work) ya da agent.json ile sabitlenmiş klasör; en yüksek öncelik.</summary>
+        public static string? ExplicitFolder { get; set; }
+
+        /// <summary>
+        /// Güncelleme dosyalarının (updateFiles) klasörü. Öncelik: --work / agent.json → arayüzden kaydedilen →
+        /// WPF klasörü (C:\Rasyomed\RboxTools\updateFiles varsa) → %AppData%\RboxAgent\updateFiles.
+        /// </summary>
+        public static string WorkFolder
+        {
+            get
+            {
+                if (!string.IsNullOrWhiteSpace(ExplicitFolder)) return ExplicitFolder!;
+                string? saved = DataStore.Settings.Update.WorkFolder;
+                if (!string.IsNullOrWhiteSpace(saved)) return saved!;
+                return Directory.Exists(WpfFolder) ? WpfFolder : DefaultFolder;
+            }
+        }
+
+        public static string WorkSource =>
+            !string.IsNullOrWhiteSpace(ExplicitFolder) ? "cli" :
+            !string.IsNullOrWhiteSpace(DataStore.Settings.Update.WorkFolder) ? "saved" :
+            Directory.Exists(WpfFolder) ? "wpf" : "default";
+
+        /// <summary>Arayüzden klasör seçimi. Boş yol = otomatik. Komut satırıyla sabitlenmişse değiştirilemez.</summary>
+        public static (bool ok, string message) SetWorkFolder(string? path)
+        {
+            if (!string.IsNullOrWhiteSpace(ExplicitFolder))
+                return (false, "Klasör ajan komut satırında (--work / agent.json) sabitlenmiş; oradan değiştirin.");
+            string p = (path ?? "").Trim();
+            if (p.Length > 0)
+            {
+                if (!Path.IsPathRooted(p)) return (false, "Tam bir klasör yolu girin (ör. C:\\Rasyomed\\RboxTools\\updateFiles).");
+                try { p = Path.GetFullPath(p); Directory.CreateDirectory(p); }
+                catch (Exception ex) { return (false, "Klasör kullanılamıyor: " + ex.Message); }
+            }
+            DataStore.Settings.Update.WorkFolder = p.Length == 0 ? null : p;
+            DataStore.Save();
+            return (true, "");
+        }
 
         /// <summary>Cihaza gönderilen, sık düzenlenen dosyalar (WPF'tekiyle aynı liste).</summary>
         public static readonly string[] EditableFiles = { "JsonSettings.txt", "serialdevices.json", "wpa_supplicant.txt", "dhcpcd.txt" };
@@ -438,7 +480,16 @@ namespace RboxAgent.Modules.Update
             var files = new DirectoryInfo(WorkFolder).EnumerateFiles()
                 .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
                 .Select(f => new { name = f.Name, size = f.Length, modified = f.LastWriteTime.ToString("dd.MM.yyyy HH:mm") }).ToList();
-            return new { workFolder = WorkFolder, editable = EditableFiles, files };
+            return new
+            {
+                workFolder = WorkFolder,
+                source = WorkSource,
+                wpfFolder = WpfFolder,
+                wpfExists = Directory.Exists(WpfFolder),
+                defaultFolder = DefaultFolder,
+                editable = EditableFiles,
+                files,
+            };
         }
 
         /// <summary>Dosyayı / klasörü SUNUCUDA açar (AnyDesk'te ekranda görünür). Yalnızca izinli adlar.</summary>

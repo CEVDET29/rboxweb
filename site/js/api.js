@@ -98,6 +98,16 @@ export async function api(path, opts) {
   return data;
 }
 
+/** Dosya indirme: yanıtı Blob olarak döner (kod başlığı gerektiği için doğrudan bağlantı kullanılamaz). */
+export async function blob(path) {
+  const res = await raw(path);
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}));
+    throw new Error(j.error || `Hata ${res.status}`);
+  }
+  return res.blob();
+}
+
 /** Satır satır akan JSON (ndjson) okur; her satır için onMsg çağrılır. */
 export async function stream(path, body, onMsg, signal) {
   const res = await raw(path, { method: "POST", body, signal });

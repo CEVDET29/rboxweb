@@ -311,6 +311,58 @@ td input.cell-edit { width: 100%; height: 26px; padding: 0 6px; }
 .link { background: none; border: 0; color: var(--accent-text); cursor: pointer; font-weight: 600; padding: 4px 6px; }
 .link:hover { text-decoration: underline; }
 
+/* ── Cihaz Kontrol: kartlar ───────────────────────────────────── */
+.cgroup { display: flex; align-items: center; gap: 10px; padding: 10px 4px 0; font-weight: 600; cursor: pointer; user-select: none; }
+.cgroup .gcount { margin-left: 4px; }
+.cards { display: flex; flex-wrap: wrap; gap: 16px; padding: 14px 0 6px; }
+.dcard { width: 330px; padding: 16px 18px; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); transition: opacity .15s; }
+.dcard.unreach { opacity: .45; } .dcard.busy { opacity: .75; }
+.dcard .head { display: flex; align-items: center; gap: 10px; }
+.dcard .bar { width: 4px; height: 30px; border-radius: 2px; flex: none; }
+.dcard .title { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dcard .sub { color: var(--text-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dcard .ipline { display: flex; justify-content: space-between; gap: 8px; margin: 8px 0 10px; font-size: 12px; color: var(--text-muted); }
+.dcard .ipline .mono { color: var(--text); }
+.tilebox { display: grid; grid-template-columns: 1fr 1px 1fr; border: 1px solid var(--border); border-radius: 10px; }
+.tilebox > div { padding: 9px 12px; } .tilebox > i { background: var(--border); }
+.tk { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; color: var(--section); text-transform: uppercase; }
+.tv { font-size: 15px; font-weight: 600; margin-top: 4px; }
+.tv.ok { color: var(--ok-text); } .tv.warn { color: var(--warn-text); } .tv.error { color: var(--error-text); }
+.meterrow { display: flex; justify-content: space-between; align-items: center; margin: 12px 0 4px; font-size: 12px; gap: 6px; }
+.meterrow .lbl { color: var(--text-2); } .meterrow b { color: var(--ok-text); }
+.meter { height: 6px; border-radius: 99px; background: var(--track); overflow: hidden; }
+.meter > div { height: 100%; background: var(--ok); border-radius: 99px; }
+.meter.hi > div { background: var(--warn); } .meter.crit > div { background: var(--error); }
+.warnbox { margin-top: 8px; padding: 4px 8px; border-radius: 10px; font-size: 11.5px; }
+.warnbox.w { background: var(--warn-bg); color: var(--warn-text); } .warnbox.e { background: var(--error-bg); color: var(--error-text); }
+.swrow { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 12px; }
+.usbrow { display: flex; gap: 10px; margin-top: 6px; }
+.usbrow .badge { flex: none; align-self: flex-start; }
+.iface { border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; margin-top: 8px; }
+.iface.via { border-color: var(--accent); }
+.iface .ih { display: flex; align-items: center; gap: 8px; }
+.iface .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex: none; }
+.iface .dot.up { background: var(--ok); }
+.iface .kv { display: grid; grid-template-columns: 34px 1fr; gap: 1px 0; margin-top: 6px; font-size: 12px; }
+.iface .kv span:nth-child(odd) { color: var(--text-muted); font-size: 11.5px; }
+.pill { font-size: 11px; padding: 0 8px; border-radius: 12px; border: 1px solid var(--accent); background: var(--accent-subtle); color: var(--accent-text); margin-left: 6px; }
+.macok { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--ok-bg); color: var(--ok-text); font-size: 10px; margin-left: 6px; }
+.wifi { border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; margin-top: 8px; display: flex; justify-content: space-between; align-items: center; }
+.sigbars { display: flex; align-items: flex-end; gap: 3px; height: 16px; }
+.sigbars i { width: 4px; border-radius: 1px; background: var(--track); } .sigbars i.on { background: var(--accent); }
+.dcard .acts { display: flex; justify-content: flex-end; gap: 6px; }
+.dcard .btn.mini { height: 28px; padding: 0 9px; }
+.dcard .btn.mini svg { width: 13px; height: 13px; }
+.dcard hr { border: 0; border-top: 1px solid var(--border); margin: 14px 0 10px; }
+
+.btn.mini { height: 28px; padding: 0 10px; font-size: 12px; }
+
+/* ── Dosyalar ─────────────────────────────────────────────────── */
+.editor { width: 100%; min-height: 380px; resize: vertical; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text); font: 13px/1.5 Consolas, "Cascadia Mono", monospace; tab-size: 4; white-space: pre; overflow: auto; }
+.editor:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+.dropzone-active { outline: 2px dashed var(--accent); outline-offset: -6px; background: var(--accent-subtle); }
+
 .placeholder { padding: 70px 20px; text-align: center; color: var(--text-2); }
 .placeholder h2 { margin: 0 0 6px; color: var(--text); }
 

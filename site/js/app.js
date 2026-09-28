@@ -5,13 +5,15 @@ import { $, esc, sha256Hex, storeGet, storeSet, sessionGet, sessionSet, toast, d
 import { createPing } from "./ping.js";
 import { createYbdb } from "./ybdb.js";
 import { createUpdate } from "./update.js";
+import { createControl } from "./control.js";
+import { createFiles } from "./files.js";
 
 const MODULES = [
   { id: "ping", title: "Ping Kontrol", icon: ICONS.ping, sub: "Excel listesindeki cihazlara ping, SSH portu ve MAC kontrolü" },
   { id: "update", title: "Cihaz Güncelleme", icon: ICONS.update, sub: "SSH ile toplu güncelleme, sürüm kontrolü ve tek cihaz ayarları" },
-  { id: "control", title: "Cihaz Kontrol", icon: ICONS.control, sub: "Cihazların anlık durumu ve toplu işlemler", soon: true },
+  { id: "control", title: "Cihaz Kontrol", icon: ICONS.control, sub: "Cihazların anlık durumu ve toplu işlemler" },
   { id: "ybdb", title: "YBDB Odalar", icon: ICONS.ybdb, sub: "Oda, yatak ve doluluk durumu" },
-  { id: "files", title: "Dosyalar", icon: ICONS.files, sub: "Güncelleme dosyalarını bu hastane için düzenle", soon: true },
+  { id: "files", title: "Dosyalar", icon: ICONS.files, sub: "Güncelleme dosyalarını bu hastane için düzenle" },
 ];
 
 const screens = { gate: $("#gate"), connect: $("#connect"), app: $("#app") };
@@ -140,10 +142,16 @@ function enterApp() {
   if (entered) return;
   entered = true;
 
-  const ctx = { pickDeviceList, loadDeviceFile, flushSsh: () => saveSsh.flush() };
+  const ctx = {
+    pickDeviceList, loadDeviceFile, flushSsh: () => saveSsh.flush(),
+    // Cihaz Kontrol kartındaki "Güncelle": Cihaz Güncelleme'ye geç ve yalnızca o cihazı işaretle
+    openInUpdate: (ip) => { select("update"); views.update.focusTarget(ip); },
+  };
   views.ping = createPing(ctx);
   views.ybdb = createYbdb();
   views.update = createUpdate(ctx);
+  views.control = createControl(ctx);
+  views.files = createFiles(ctx);
   renderListButton();
   loadSsh();
 
@@ -264,7 +272,12 @@ async function loadDeviceFile(file) {
 
 // Sayfaya sürüklenen dosya (sayfanın herhangi bir yerinde çalışır)
 addEventListener("dragover", (e) => e.preventDefault());
-addEventListener("drop", (e) => { e.preventDefault(); const f = e.dataTransfer?.files?.[0]; if (f && !screens.app.hidden) loadDeviceFile(f); });
+addEventListener("drop", (e) => {
+  e.preventDefault();
+  if (current === "files") return;                       // Dosyalar sekmesi bırakılan dosyaları kendisi yükler
+  const f = e.dataTransfer?.files?.[0];
+  if (f && !screens.app.hidden) loadDeviceFile(f);
+});
 
 // ── Tema ve görünüm ──────────────────────────────────────────
 function applyTheme(t) {

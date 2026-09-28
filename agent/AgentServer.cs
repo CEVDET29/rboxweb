@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using RboxAgent.Modules.Ping;
+using RboxAgent.Modules.Control;
+using RboxAgent.Modules.Files;
 using RboxAgent.Modules.Update;
 using RboxAgent.Modules.Ybdb;
 
@@ -332,6 +334,110 @@ namespace RboxAgent
                     return;
                 }
 
+                case ("PUT", "/api/update/workfolder"):
+                {
+                    var b = await Body<WorkFolderRequest>(req);
+                    var (ok, message) = UpdateService.SetWorkFolder(b.Path);
+                    await Reply(res, ok ? new { ok = true, error = "" } : new { ok = false, error = message }, ok ? 200 : 422);
+                    return;
+                }
+
+                // ── Cihaz Kontrol ─────────────────────────────────────────────
+                case ("POST", "/api/control/refresh"):
+                case ("POST", "/api/control/exec"):
+                {
+                    bool isRefresh = path.EndsWith("/refresh");
+                    if (UpdateService.Credentials() == null) { await Reply(res, new { error = "SSH kullanıcı adı ve şifre girin (üst banttaki SSH düğmesi)." }, 422); return; }
+
+                    CtlRefreshRequest? rr = null; CtlExecRequest? er = null;
+                    try { if (isRefresh) rr = await Body<CtlRefreshRequest>(req); else er = await Body<CtlExecRequest>(req); }
+                    catch { await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+                    if (er != null && !ControlService.IsKnownAction(er.Action)) { await Reply(res, new { error = "Bilinmeyen işlem." }, 400); return; }
+                    if (!ControlService.TryBegin()) { await Reply(res, new { error = "Başka bir işlem sürüyor." }, 409); return; }
+
+                    res.StatusCode = 200;
+                    res.ContentType = "application/x-ndjson; charset=utf-8";
+                    res.SendChunked = true;
+                    var sink = new NdjsonSink(res.OutputStream, Json);
+                    try
+                    {
+                        if (isRefresh) await ControlService.RefreshAsync(rr!, sink);
+                        else await ControlService.ExecAsync(er!, sink);
+                    }
+                    finally { ControlService.End(); await sink.CompleteAsync(); try { res.Close(); } catch { } }
+                    return;
+                }
+
+                // ── Dosyalar (updateFiles klasörü) ────────────────────────────
+                case ("GET", "/api/files/list"):
+                    await Reply(res, FilesService.List());
+                    return;
+
+                case ("GET", "/api/files/read"):
+                {
+                    var (ok, error, data) = FilesService.Read(req.QueryString["path"]);
+                    await Reply(res, ok ? data! : new { error }, ok ? 200 : 422);
+                    return;
+                }
+
+                case ("PUT", "/api/files/write"):
+                {
+                    var (ok, error) = FilesService.Write(await Body<WriteRequest>(req));
+                    await Reply(res, ok ? new { ok = true, error = "" } : new { ok = false, error = error ?? "" }, ok ? 200 : 422);
+                    return;
+                }
+
+                case ("POST", "/api/files/upload"):
+                {
+                    var (ok, status, error) = await FilesService.UploadAsync(req.QueryString["path"], req.InputStream, req.QueryString["overwrite"] == "1");
+                    await Reply(res, ok ? new { ok = true, error = "" } : new { ok = false, error = error ?? "" }, status);
+                    return;
+                }
+
+                case ("DELETE", "/api/files"):
+                {
+                    var (ok, error) = FilesService.Delete(req.QueryString["path"]);
+                    await Reply(res, ok ? new { ok = true, error = "" } : new { ok = false, error = error ?? "" }, ok ? 200 : 422);
+                    return;
+                }
+
+                case ("POST", "/api/files/rename"):
+                {
+                    var (ok, error) = FilesService.Rename(await Body<RenameRequest>(req));
+                    await Reply(res, ok ? new { ok = true, error = "" } : new { ok = false, error = error ?? "" }, ok ? 200 : 422);
+                    return;
+                }
+
+                case ("GET", "/api/files/download"):
+                {
+                    string? file = FilesService.ResolveExisting(req.QueryString["path"]);
+                    if (file == null) { await Reply(res, new { error = "Dosya bulunamadı." }, 404); return; }
+                    await using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    res.StatusCode = 200;
+                    res.ContentType = "application/octet-stream";
+                    res.ContentLength64 = fs.Length;
+                    await fs.CopyToAsync(res.OutputStream);
+                    res.Close();
+                    return;
+                }
+
+                case ("GET", "/api/files/zip"):
+                {
+                    res.StatusCode = 200;
+                    res.ContentType = "application/zip";
+                    res.SendChunked = true;
+                    await FilesService.WriteZipAsync(res.OutputStream);
+                    res.Close();
+                    return;
+                }
+
+                case ("POST", "/api/files/import"):
+                {
+                    var (ok, error, count) = await FilesService.ImportZipAsync(req.InputStream);
+                    await Reply(res, ok ? new { ok = true, error = "", count } : new { ok = false, error = error ?? "", count }, ok ? 200 : 422);
+                    return;
+                }
+
                 // ── Ping çalıştırma (satır satır akan JSON) ──────────────────
                 case ("POST", "/api/ping/run"):
                 {
@@ -377,6 +483,7 @@ namespace RboxAgent
 
         private sealed class IpIn { public string? Ip { get; set; } }
         private sealed class OpenRequest { public string? Kind { get; set; } public string? Name { get; set; } }
+        private sealed class WorkFolderRequest { public string? Path { get; set; } }
         private sealed class SshSettingsIn
         {
             public string? User { get; set; }
