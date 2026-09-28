@@ -82,6 +82,16 @@ namespace RboxAgent
         /// <summary>Tüm modüllerin ortak SSH kullanıcı / parolası.</summary>
         public SshSettings Ssh { get; set; } = new();
         public PingSettings Ping { get; set; } = new();
+        public YbdbSettings Ybdb { get; set; } = new();
+    }
+
+    public sealed class YbdbSettings
+    {
+        public string? Server { get; set; }
+        public string User { get; set; } = "RasyoUser";
+        public bool RememberPassword { get; set; }
+        /// <summary>Yalnızca "Şifreyi hatırla" açıkken DPAPI ile şifreli saklanır.</summary>
+        public string? PassProtected { get; set; }
     }
 
     public sealed class SshSettings

@@ -255,6 +255,9 @@ tr.item:hover td.actions .btn.icon { visibility: visible; }
 .txt-muted { color: var(--text-muted); }
 .src { margin-left: 6px; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 5px; background: var(--subtle); color: var(--text-2); }
 
+.ybdb-grid { display: grid; grid-template-columns: minmax(340px, 5fr) 7fr; gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .ybdb-grid { grid-template-columns: 1fr; } }
+
 .placeholder { padding: 70px 20px; text-align: center; color: var(--text-2); }
 .placeholder h2 { margin: 0 0 6px; color: var(--text); }
 

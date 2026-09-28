@@ -3,12 +3,13 @@ import { PASSWORD_SHA256 } from "./config.js";
 import { agent, discover, setToken, checkToken, api } from "./api.js";
 import { $, esc, sha256Hex, storeGet, storeSet, sessionGet, sessionSet, toast, debounce, ICONS } from "./util.js";
 import { createPing } from "./ping.js";
+import { createYbdb } from "./ybdb.js";
 
 const MODULES = [
   { id: "ping", title: "Ping Kontrol", icon: ICONS.ping, sub: "Excel listesindeki cihazlara ping, SSH portu ve MAC kontrolü" },
   { id: "update", title: "Cihaz Güncelleme", icon: ICONS.update, sub: "SSH ile toplu güncelleme, sürüm kontrolü ve tek cihaz ayarları", soon: true },
   { id: "control", title: "Cihaz Kontrol", icon: ICONS.control, sub: "Cihazların anlık durumu ve toplu işlemler", soon: true },
-  { id: "ybdb", title: "YBDB Odalar", icon: ICONS.ybdb, sub: "Oda, yatak ve doluluk durumu", soon: true },
+  { id: "ybdb", title: "YBDB Odalar", icon: ICONS.ybdb, sub: "Oda, yatak ve doluluk durumu" },
   { id: "files", title: "Dosyalar", icon: ICONS.files, sub: "Güncelleme dosyalarını bu hastane için düzenle", soon: true },
 ];
 
@@ -87,12 +88,9 @@ if (repo) {
   // Normal tıklama: ajan komutu. Hızlıca 3 tıklama (e.detail = ardışık tıklama sayısı): masaüstü sürümü komutu.
   $("#cnCopy").addEventListener("click", async (e) => {
     const desktop = e.detail >= 3;
-    try {
-      await navigator.clipboard.writeText(desktop ? desktopCommand(repo) : launchCommand(repo));
-      toast(desktop
-        ? "Masaüstü sürümü komutu kopyalandı. PowerShell'e yapıştırın: C:\\Rasyomed\\RboxTools'a indirilir."
-        : "Komut kopyalandı. PowerShell'e yapıştırıp Enter'a basın.", desktop ? 5000 : 2600);
-    } catch { toast("Kopyalanamadı."); }
+    // Başarıda bildirim yok (istenmedi); yalnızca kopyalanamazsa haber verilir
+    try { await navigator.clipboard.writeText(desktop ? desktopCommand(repo) : launchCommand(repo)); }
+    catch { toast("Kopyalanamadı."); }
   });
 }
 
@@ -130,6 +128,7 @@ function enterApp() {
 
   const ctx = { pickDeviceList, loadDeviceFile, flushSsh: () => saveSsh.flush() };
   views.ping = createPing(ctx);
+  views.ybdb = createYbdb();
   loadSsh();
 
   $("#tabs").innerHTML = MODULES.map((m) =>

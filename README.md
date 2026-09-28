@@ -18,7 +18,10 @@ Tarayıcı (github.io'dan gelen arayüz) ─► http://127.0.0.1:47800 ─► Rb
 | Modül | Web'de |
 |---|---|
 | Ping Kontrol | ✅ tamam (Excel, ping, SSH portu, ARP/SSH ile MAC, üretici, izleme modu, filtre/arama/sıralama, CSV) |
-| Cihaz Güncelleme, Cihaz Kontrol, YBDB Odalar, Dosyalar | ⏳ sıradaki aşamalar |
+| YBDB Odalar | ✅ tamam (SQL Server bağlantısı, doluluk özeti, oda / yatak tabloları, oda seçince süzme, arama, sıralama) |
+| Cihaz Güncelleme, Cihaz Kontrol, Dosyalar | ⏳ sıradaki aşamalar |
+
+YBDB parolası ajanda yalnızca bellekte tutulur; "Şifreyi hatırla" açıksa DPAPI ile şifreli saklanır. Tarayıcıya geri gönderilmez.
 
 ## Güvenlik
 

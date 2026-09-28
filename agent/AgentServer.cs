@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using RboxAgent.Modules.Ping;
+using RboxAgent.Modules.Ybdb;
 
 namespace RboxAgent
 {
@@ -190,6 +191,38 @@ namespace RboxAgent
                     if (b.Pass != null) ssh.PassProtected = DataStore.Protect(b.Pass);   // "" → parola silinir
                     DataStore.Save();
                     await Reply(res, new { ok = true });
+                    return;
+                }
+
+                // ── YBDB (SQL Server, salt okunur) ────────────────────────────
+                case ("GET", "/api/ybdb/settings"):
+                {
+                    var y = DataStore.Settings.Ybdb;
+                    await Reply(res, new
+                    {
+                        server = y.Server ?? YbdbService.PreferredIPv4() ?? "",
+                        user = y.User,
+                        remember = y.RememberPassword,
+                        hasPass = !string.IsNullOrEmpty(y.PassProtected),
+                        connected = YbdbService.Connected,
+                        connectedServer = YbdbService.ConnectedServer,
+                    });
+                    return;
+                }
+
+                case ("POST", "/api/ybdb/connect"):
+                {
+                    var b = await Body<ConnectRequest>(req);
+                    var (ok, message) = await YbdbService.ConnectAsync(b);
+                    await Reply(res, ok ? new { ok = true, server = message } : new { ok = false, error = message }, ok ? 200 : 422);
+                    return;
+                }
+
+                case ("GET", "/api/ybdb/data"):
+                {
+                    if (!YbdbService.Connected) { await Reply(res, new { error = "Bağlı değil." }, 409); return; }
+                    try { await Reply(res, await YbdbService.LoadAsync()); }
+                    catch (Exception ex) { await Reply(res, new { error = YbdbRepository.FriendlyError(ex) }, 422); }
                     return;
                 }
 

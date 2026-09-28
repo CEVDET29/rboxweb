@@ -8,7 +8,7 @@
     <AssemblyName>RboxAgent</AssemblyName>
     <Product>RasyoBOX Ajan</Product>
     <Company>Rasyomed</Company>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <!-- Yalnızca temel .NET 8 çalışma zamanı gerekir (ASP.NET Core gerekmez): HttpListener kullanılır. -->
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- Ajan yalnızca Windows'ta çalışır (DPAPI, SendARP) -->
@@ -17,6 +17,7 @@
   <ItemGroup>
     <PackageReference Include="ExcelDataReader" Version="3.7.0" />
     <PackageReference Include="ExcelDataReader.DataSet" Version="3.7.0" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.3" />
     <PackageReference Include="SSH.NET" Version="2026.0.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
