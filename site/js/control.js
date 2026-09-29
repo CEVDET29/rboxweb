@@ -309,7 +309,7 @@ export function createControl(ctx) {
 
   async function refresh(list) {
     if (busy || list.length === 0) return;
-    await ctx.flushSsh?.();
+    if (ctx.requireSsh && !(await ctx.requireSsh())) return;
     busy = true; setStatus("Cihazlar okunuyor…");
     abort = new AbortController();
     render();
@@ -334,7 +334,7 @@ export function createControl(ctx) {
   async function exec(action, list, question, doneText, skipConfirm = false) {
     if (busy || list.length === 0) return [];
     if (!skipConfirm && !confirm(question)) return [];
-    await ctx.flushSsh?.();
+    if (ctx.requireSsh && !(await ctx.requireSsh())) return;
     busy = true; setStatus("Komut gönderiliyor…");
     abort = new AbortController();
     render();

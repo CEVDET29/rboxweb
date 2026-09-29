@@ -674,7 +674,7 @@ export function createUpdate(ctx) {
     if (opt.jsonSettings && targets.some((t) => t.yatakId === "") &&
         !confirm("Yatak ID boş olan satırlar var. JsonSettings güncellenecek. Devam edilsin mi?")) return;
 
-    await ctx.flushSsh?.();
+    if (ctx.requireSsh && !(await ctx.requireSsh())) return;
     targets.forEach((t) => { t.status = "Sırada"; t.statusSev = "muted"; });
     await run("update", "/api/update/run", { targets: targets.map(toTarget), options: buildOptions(), parallel: cfg.parallel });
   }
@@ -684,7 +684,7 @@ export function createUpdate(ctx) {
     if (isBusy()) return;
     const targets = rows.filter((r) => r.checked);
     if (targets.length === 0) return log("Versiyon kontrol için işaretli cihaz yok.", "warn");
-    await ctx.flushSsh?.();
+    if (ctx.requireSsh && !(await ctx.requireSsh())) return;
     await run("version", "/api/update/version", { targets: targets.map(toTarget), parallel: cfg.parallel });
   }
 
@@ -703,7 +703,7 @@ export function createUpdate(ctx) {
     const sel = rows.find((r) => r.id === lastClicked && selected.has(r.id));
     if (!sel) return log("Listeden bir cihaz seçin.", "error");
     if (!el.tty.value.trim()) return log("Gönderilecek metin boş.", "error");
-    await ctx.flushSsh?.();
+    if (ctx.requireSsh && !(await ctx.requireSsh())) return;
     q("uTtySend").disabled = true;
     log("TTY0'a mesaj gönderiliyor...", "info", sel.ip);
     try {
@@ -727,7 +727,7 @@ export function createUpdate(ctx) {
       addLog(el.sLog, { time: now(), ip: "", message, kind });
       log(message, kind, body.targetIp);              // WPF'te olduğu gibi ana günlüğe de yazılır
     };
-    await ctx.flushSsh?.();
+    if (ctx.requireSsh && !(await ctx.requireSsh())) return;
     singleBusy = true; q("sApply").disabled = true; saveSettings.flush();
     try {
       await stream("/api/update/single", body, (m) => {

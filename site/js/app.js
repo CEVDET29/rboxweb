@@ -143,7 +143,7 @@ function enterApp() {
   entered = true;
 
   const ctx = {
-    pickDeviceList, loadDeviceFile, flushSsh: () => saveSsh.flush(),
+    pickDeviceList, loadDeviceFile, flushSsh: () => saveSsh.flush(), requireSsh,
     // Cihaz Kontrol kartındaki "Güncelle": Cihaz Güncelleme'ye geç ve yalnızca o cihazı işaretle
     openInUpdate: (ip) => { select("update"); views.update.focusTarget(ip); },
   };
@@ -233,6 +233,15 @@ $("#btnSsh").addEventListener("click", (e) => {
 document.addEventListener("click", (e) => { if (!sshPop.hidden && !e.target.closest(".pop-wrap")) sshPop.hidden = true; });
 sshPop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") { sshPop.hidden = true; saveSsh.flush(); } });
 renderSsh();
+
+/** SSH şifresi girilmemişse işlemi başlatmadan uyarır ve SSH kutusunu açar. */
+async function requireSsh() {
+  await saveSsh.flush();
+  if (ssh.hasPass) return true;
+  toast("SSH şifresi girilmemiş. Sağ üstteki SSH düğmesinden kullanıcı ve şifreyi girin.", 6000);
+  sshPop.hidden = false; $("#sshPass").focus();
+  return false;
+}
 
 // ── Ortak cihaz listesi (Excel) ──────────────────────────────
 const fileInput = Object.assign(document.createElement("input"), { type: "file", accept: ".xlsx,.xls", hidden: true });
