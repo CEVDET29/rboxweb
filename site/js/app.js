@@ -322,3 +322,12 @@ $("#btnLogout").addEventListener("click", () => { sessionSet("rbox.auth", null);
   if (await passwordOk()) await connectFlow();
   else { show("gate"); $("#gatePass").focus(); }
 })();
+
+$("#sshForget").addEventListener("click", async () => {
+  try {
+    await api("/api/settings/ssh", { method: "PUT", body: { user: $("#sshUser").value, pass: "" } });
+    ssh.hasPass = false; sshPassDirty = false;
+    $("#sshPass").value = ""; $("#sshPass").placeholder = "";
+    renderSsh();
+  } catch (e) { toast("Şifre silinemedi: " + e.message); }
+});
