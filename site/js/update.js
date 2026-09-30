@@ -409,7 +409,8 @@ export function createUpdate(ctx) {
       rows.push(newRow(ip, r.oda, yatakId, r.yatak));
       added++;
     }
-    log(skipped === 0 ? `${added} cihaz yüklendi.` : `${added} cihaz yüklendi (${skipped} satır geçersiz / tekrarlı IP, atlandı).`);
+    if (devices.rows.length === 0) log("Cihaz listesi kaldırıldı.");
+    else log(skipped === 0 ? `${added} cihaz yüklendi.` : `${added} cihaz yüklendi (${skipped} satır geçersiz / tekrarlı IP, atlandı).`);
     render();
     return true;
   }

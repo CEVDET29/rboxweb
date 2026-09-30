@@ -256,9 +256,22 @@ function pickDeviceList() { fileInput.click(); }
 /** Üst banttaki ortak düğme: "Cihaz listesi <dosya adı>" (WPF'teki gibi). */
 function renderListButton() {
   const name = devices.fileName;
-  $("#btnList").innerHTML = `${ICONS.folder}<span>Cihaz listesi ${name ? `<b>${esc(name)}</b>` : ""}</span>`;
+  $("#btnList").innerHTML = `${ICONS.folder}<span>Cihaz listesi ${name ? `<b>${esc(name)}</b>` : ""}</span>` +
+    (name ? `<span class="list-x" data-clear title="Cihaz listesini kaldır (Excel bağlantısını kes)">✕</span>` : "");
 }
-$("#btnList").addEventListener("click", pickDeviceList);
+$("#btnList").addEventListener("click", (e) => {
+  if (e.target.closest("[data-clear]")) { clearDeviceList(); return; }
+  pickDeviceList();
+});
+
+/** Excel ile bağlantıyı keser: liste tüm modüllerden kalkar (dosyaya dokunulmaz). */
+function clearDeviceList() {
+  if (anyBusy()) { toast("Bir işlem sürerken cihaz listesi kaldırılamaz. İşlem bitince tekrar deneyin."); return; }
+  devices.rows = []; devices.fileName = "";
+  distributeDevices();
+  renderListButton();
+  toast("Cihaz listesi kaldırıldı");
+}
 
 /** Bir modülde iş sürerken liste değiştirilemez (WPF ile aynı kural). */
 const anyBusy = () => Object.values(views).some((v) => v.isBusy?.());
@@ -292,16 +305,38 @@ addEventListener("drop", (e) => {
 });
 
 // ── Tema ve görünüm ──────────────────────────────────────────
-function applyTheme(t) {
-  document.documentElement.dataset.theme = t;
-  $("#btnTheme").innerHTML = t === "dark" ? ICONS.sun : ICONS.moon;
-  $("#btnTheme").title = t === "dark" ? "Açık temaya geç" : "Koyu temaya geç";
+// Masaüstündeki temalarla aynı (WPF Themes/*.xaml). sw: menüdeki renk örneği (üst bant → vurgu).
+const THEMES = [
+  { id: "system", title: "Sistem", note: "tarayıcı ayarı", sw: "linear-gradient(135deg,#ECEEF5 50%,#0A1120 50%)" },
+  { id: "light", title: "Açık", note: "açık", sw: "linear-gradient(135deg,#0B2753 50%,#2563EB 50%)" },
+  { id: "dark", title: "Koyu", note: "koyu", sw: "linear-gradient(135deg,#071733 50%,#3B82F6 50%)" },
+  { id: "ocean", title: "Okyanus", note: "açık", sw: "linear-gradient(135deg,#0B4F5C 50%,#0E8A96 50%)" },
+  { id: "emerald", title: "Zümrüt", note: "koyu", sw: "linear-gradient(135deg,#062A22 50%,#10B981 50%)" },
+  { id: "graphite", title: "Grafit", note: "koyu", sw: "linear-gradient(135deg,#17181B 50%,#F59E0B 50%)" },
+];
+const darkQuery = matchMedia("(prefers-color-scheme: dark)");
+const themeChoice = () => { const t = storeGet("rbox.theme"); return THEMES.some((x) => x.id === t) ? t : "system"; };
+
+function applyTheme(choice) {
+  const eff = choice === "system" ? (darkQuery.matches ? "dark" : "light") : choice;
+  document.documentElement.dataset.theme = eff;
+  $("#btnTheme").innerHTML = ICONS.palette;
+  $("#btnTheme").title = "Tema: " + THEMES.find((x) => x.id === choice).title;
+  $("#themeList").innerHTML = THEMES.map((x) =>
+    `<button class="theme-opt" role="menuitemradio" data-theme-id="${x.id}" aria-checked="${x.id === choice}">
+      <span class="theme-sw" style="background:${x.sw}"></span>${x.title}<small>${x.note}</small></button>`).join("");
 }
-$("#btnTheme").addEventListener("click", () => {
-  const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-  storeSet("rbox.theme", t); applyTheme(t);
+const themePop = $("#themePop");
+$("#btnTheme").addEventListener("click", (e) => { e.stopPropagation(); themePop.hidden = !themePop.hidden; });
+$("#themeList").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-theme-id]"); if (!b) return;
+  storeSet("rbox.theme", b.dataset.themeId);
+  applyTheme(b.dataset.themeId);
+  themePop.hidden = true;
 });
-applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+document.addEventListener("click", (e) => { if (!themePop.hidden && !e.target.closest("#themePop, #btnTheme")) themePop.hidden = true; });
+darkQuery.addEventListener("change", () => { if (themeChoice() === "system") applyTheme("system"); });
+applyTheme(themeChoice());
 
 $("#btnCompact").addEventListener("click", () => {
   const on = document.body.classList.toggle("compact");

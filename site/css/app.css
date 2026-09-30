@@ -416,3 +416,62 @@ tr.item.off td { opacity: .6; }
 .lp-add { display: flex; gap: 6px; padding: 10px 12px 12px; flex: none; }
 .lp-add input { flex: 1; height: 28px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; }
 .txt-ok { color: var(--ok-text); }
+
+/* ── Ek temalar (WPF: Themes/Ocean.xaml, Emerald.xaml, Graphite.xaml ile aynı renkler) ── */
+:root[data-theme="ocean"] {
+  --header: linear-gradient(135deg, #0B4F5C 0%, #0E6B78 55%, #148A94 100%);
+  --header-sub: #BFE3E6;
+  --logo-dot: #FBBF24;
+  --page: #E9F2F3; --surface: #FFFFFF; --subtle: #F3F8F9; --hover: #EDF5F6; --pressed: #DCEBED;
+  --border: #D9E7E9; --border-strong: #BFD3D6;
+  --shadow: 0 1px 2px rgba(14,58,65,.06), 0 6px 22px rgba(14,58,65,.10);
+  --text: #0E2A30; --text-2: #4F6970; --text-muted: #86A0A6; --section: #4C7A82;
+  --accent: #0E8A96; --accent-hover: #0B717B; --accent-subtle: #E3F4F5; --accent-text: #0B6E78; --on-accent: #FFFFFF;
+  --row-hover: #F4F9FA; --row-selected: #DDF0F2;
+  --info-text: #0B6E78; --info-bg: #E3F4F5;
+  --track: #E0ECEE; --scroll: #BCD0D3;
+  color-scheme: light;
+}
+:root[data-theme="emerald"] {
+  --header: linear-gradient(135deg, #062A22 0%, #0A3D31 55%, #0F5242 100%);
+  --header-sub: #9CCBBB; --header-btn-border: rgba(255,255,255,.25);
+  --logo-dot: #FBBF24;
+  --page: #07130F; --surface: #0F1F1A; --subtle: #132822; --hover: #173029; --pressed: #1C3A31;
+  --border: #1E3A31; --border-strong: #2C5245;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 22px rgba(0,0,0,.35);
+  --text: #E3F2EC; --text-2: #9DBBB0; --text-muted: #6A8A7F; --section: #86AE9F;
+  --accent: #10B981; --accent-hover: #34D399; --accent-subtle: #123A2E; --accent-text: #6EE7B7; --on-accent: #052E22;
+  --row-hover: #132822; --row-selected: #16402F;
+  --ok-text: #4ADE80; --ok-bg: #143324; --warn-text: #FBBF24; --warn-bg: #3A2D10;
+  --error-text: #F87171; --error-bg: #3D1A1D; --info-text: #6EE7B7; --info-bg: #123A2E;
+  --track: #1A332B; --scroll: #2C5245;
+  color-scheme: dark;
+}
+:root[data-theme="graphite"] {
+  --header: linear-gradient(135deg, #17181B 0%, #222429 55%, #2D3037 100%);
+  --header-sub: #B3B6BD; --header-btn-border: rgba(255,255,255,.25);
+  --logo-dot: #F59E0B;
+  --page: #111214; --surface: #1B1C20; --subtle: #222328; --hover: #26282D; --pressed: #2E3036;
+  --border: #2C2E34; --border-strong: #3D4048;
+  --shadow: 0 1px 2px rgba(0,0,0,.45), 0 6px 22px rgba(0,0,0,.4);
+  --text: #ECEDEF; --text-2: #AEB1B8; --text-muted: #7A7E87; --section: #9A9DA5;
+  --accent: #F59E0B; --accent-hover: #FBBF24; --accent-subtle: #3A2C12; --accent-text: #FBBF24; --on-accent: #1B1300;
+  --row-hover: #222328; --row-selected: #33291A;
+  --ok-text: #4ADE80; --ok-bg: #16301F; --warn-text: #FBBF24; --warn-bg: #3A2D10;
+  --error-text: #F87171; --error-bg: #3D1A1D; --info-text: #93C5FD; --info-bg: #1E2A3D;
+  --track: #2A2C31; --scroll: #3D4048;
+  color-scheme: dark;
+}
+
+/* Tema menüsü */
+.theme-pop { min-width: 220px; padding: 10px; }
+.theme-opt { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); cursor: pointer; text-align: left; font: inherit; }
+.theme-opt:hover { background: var(--hover); }
+.theme-opt[aria-checked="true"] { background: var(--accent-subtle); color: var(--accent-text); font-weight: 600; }
+.theme-sw { width: 26px; height: 18px; border-radius: 5px; flex: none; border: 1px solid rgba(128,128,128,.35); }
+.theme-opt small { margin-left: auto; color: var(--text-muted); font-weight: 400; }
+
+/* Cihaz listesi düğmesindeki "listeyi kaldır" */
+.list-x { margin-left: 8px; padding: 0 5px; border-radius: 5px; font-size: 11px; color: var(--header-sub); }
+.list-x:hover { background: var(--header-btn-hover); color: var(--header-text); }

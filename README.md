@@ -26,7 +26,9 @@ Tarayıcı (github.io'dan gelen arayüz) ─► http://127.0.0.1:47800 ─► Rb
 
 **Tüm web modülleri tamamlandı.**
 
-**Ortak cihaz listesi:** Excel, üst banttaki "Cihaz listesi" düğmesinden (ya da sayfaya sürükleyerek) tek yerden yüklenir;
+**Temalar:** Sistem, Açık, Koyu, Okyanus, Zümrüt, Grafit (üst banttaki palet düğmesi). WPF'teki Themes/*.xaml ile aynı renkler.
+
+**Ortak cihaz listesi:** Excel, üst banttaki "Cihaz listesi" düğmesinden (ya da sayfaya sürükleyerek) tek yerden yüklenir; yanındaki ✕ listeyi kaldırır;
 Ping Kontrol ve Cihaz Güncelleme aynı listeyi kullanır. Bir işlem sürerken liste değiştirilemez.
 
 **updateFiles klasörü:** Cihaz Güncelleme'nin cihaza gönderdiği dosyalar hastaneye özeldir, repoya konmaz. Klasör şu sırayla seçilir:

@@ -196,7 +196,7 @@ export function createControl(ctx) {
       seen.add(ip);
       devices.push(newDevice(devices.length, { ...r, ip }, map.get(key)));
     }
-    el.note.textContent = `${devices.length} cihaz · ${new Set(devices.map((d) => d.room)).size} oda`;
+    el.note.textContent = devices.length ? `${devices.length} cihaz · ${new Set(devices.map((d) => d.room)).size} oda` : "";
     render();
     return true;
   }

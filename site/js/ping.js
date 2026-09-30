@@ -185,8 +185,10 @@ export function createPing(ctx) {
     });
     fileName = devices.fileName;
     lastRunInfo = "";
-    el.file.textContent = fileName;
-    el.fileSub.textContent = `${rows.length} cihaz · ${rooms.length} grup · değiştirmek için üst banttaki "Cihaz listesi" düğmesini kullanın`;
+    el.file.textContent = fileName || "Cihaz listesi seçilmedi";
+    el.fileSub.textContent = fileName
+      ? `${rows.length} cihaz · ${rooms.length} grup · değiştirmek için üst banttaki "Cihaz listesi" düğmesini kullanın`
+      : `Üst banttaki "Cihaz listesi" düğmesinden Excel seçin (tüm modüller aynı listeyi kullanır).`;
     stopMonitorIfEmpty();
     render();
     return true;

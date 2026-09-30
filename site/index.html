@@ -10,9 +10,10 @@
   <script>
     // Tema, sayfa çizilmeden önce uygulanır (yanıp sönme olmasın)
     try {
+      // Kayıtlı tema ya da "Sistem" (kayıt yok / "system": tarayıcının açık-koyu ayarı)
       var t = localStorage.getItem("rbox.theme");
-      if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches))
-        document.documentElement.dataset.theme = "dark";
+      if (!t || t === "system") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      document.documentElement.dataset.theme = t;
     } catch (e) {}
   </script>
 </head>
@@ -81,7 +82,13 @@
           </div>
         </div>
         <button class="hbtn" id="btnCompact" title="Kompakt görünüm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-        <button class="hbtn" id="btnTheme" title="Tema"></button>
+        <div class="pop-wrap">
+          <button class="hbtn" id="btnTheme" title="Tema"></button>
+          <div class="pop theme-pop" id="themePop" hidden role="menu">
+            <div class="pop-title" style="margin:2px 4px 8px">Tema</div>
+            <div id="themeList"></div>
+          </div>
+        </div>
         <button class="hbtn" id="btnLogout" title="Çıkış"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
       </div>
       <div class="title-row">
