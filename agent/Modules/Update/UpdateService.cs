@@ -524,28 +524,7 @@ namespace RboxAgent.Modules.Update
             catch (Exception ex) { return (false, "Açılamadı: " + ex.Message); }
         }
 
-        /// <summary>Notepad++ kuruluysa onunla, değilse Not Defteri'yle (WPF ile aynı mantık).</summary>
-        private static void OpenInEditor(string path)
-        {
-            string quoted = $"\"{path}\"";
-            if (FindNotepadPlusPlus() is { } npp)
-            {
-                try { Process.Start(new ProcessStartInfo(npp, quoted) { UseShellExecute = false }); return; } catch { }
-            }
-            Process.Start(new ProcessStartInfo("notepad.exe", quoted) { UseShellExecute = true });
-        }
-
-        private static string? FindNotepadPlusPlus()
-        {
-            var candidates = new List<string?>
-            {
-                Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\notepad++.exe", null, null) as string,
-                Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\notepad++.exe", null, null) as string,
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Notepad++", "notepad++.exe"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Notepad++", "notepad++.exe"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Notepad++", "notepad++.exe"),
-            };
-            return candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c) && File.Exists(c));
-        }
+        /// <summary>Notepad++ → Windows'un .txt varsayılanı → Not Defteri (WPF ile aynı <see cref="TextEditorLauncher"/>).</summary>
+        private static void OpenInEditor(string path) => TextEditorLauncher.Open(path);
     }
 }
