@@ -17,7 +17,7 @@ Tarayıcı (github.io'dan gelen arayüz) ─► http://127.0.0.1:47800 ─► Rb
 
 | Modül | Web'de |
 |---|---|
-| Ping Kontrol | ✅ tamam (Excel, ping, SSH portu, ARP/SSH ile MAC, üretici, izleme modu, filtre/arama/sıralama, CSV) |
+| Ping Kontrol | ✅ tamam (Excel, ping, SSH portu, ARP/SSH ile MAC, üretici, izleme modu, filtre/arama/sıralama, CSV; satıra çift tıklayınca sağda **sürekli ping** ("ping ip -t", her IP bir sekme)) |
 | YBDB Odalar | ✅ tamam (SQL Server bağlantısı, doluluk özeti, oda / yatak tabloları, oda seçince süzme, arama, sıralama) |
 | Cihaz Güncelleme | ✅ tamam (toplu güncelleme, versiyon kontrol, TTY mesajı, tek cihaz JsonSettings / dhcpcd). Adımlar WPF'teki `UpdateCoordinator` ile aynı kod |
 | Cihaz Kontrol | ✅ tamam (oda gruplu cihaz kartları: sıcaklık, bellek, depolama + genişletme, SerialWorker + sürüm, **USB seri aygıtlar** (USB0/USB1: üretici ve ürün), ağ / Wi-Fi, MAC kontrolü; toplu ve tek cihaz yeniden başlatma, otomatik yenileme, karttan "Güncelle") |

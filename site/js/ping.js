@@ -102,17 +102,40 @@ export function createPing(ctx) {
 
     <div class="tiles" id="pTiles"></div>
 
+    <div class="ping-split" id="pSplit">
     <section class="card">
       <div class="card-b row" style="padding-bottom:12px">
         <input type="search" id="pSearch" placeholder="Ara: oda, yatak, IP, MAC…  (Ctrl+F)" style="width:340px;max-width:100%">
         <span class="sm muted" id="pCount"></span>
+        <span class="spacer" style="flex:1"></span>
+        <span class="sm muted">Sürekli ping için satıra çift tıklayın</span>
       </div>
       <div class="table-wrap"><table class="fixed" style="min-width:1240px">
-        <colgroup><col style="width:120px"><col style="width:80px"><col style="width:130px"><col style="width:150px"><col style="width:96px"><col style="width:80px"><col style="width:170px"><col><col style="width:150px"><col style="width:132px"></colgroup>
+        <colgroup><col style="width:120px"><col style="width:80px"><col style="width:130px"><col style="width:150px"><col style="width:96px"><col style="width:80px"><col style="width:170px"><col><col style="width:150px"><col style="width:164px"></colgroup>
         <thead><tr id="pHead"></tr></thead>
         <tbody id="pBody"></tbody>
       </table></div>
-    </section>`;
+    </section>
+
+    <!-- Sürekli ping ("ping ip -t"): her IP bir sekme; ping ajanda atılır, satırlar saniyede bir alınır -->
+    <aside class="card lp" id="lpPanel" hidden>
+      <div class="card-h row" style="justify-content:space-between">Sürekli ping
+        <button class="lp-x" id="lpCloseAll" title="Tüm sürekli pingleri kapat">✕</button></div>
+      <div class="lp-tabs" id="lpTabs" role="tablist"></div>
+      <div class="lp-bar">
+        <span class="lp-stat" id="lpStat"></span>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn mini" id="lpToggle"></button>
+        <button class="btn mini" id="lpClear" title="Ekranı temizle (ping sürer)">Temizle</button>
+        <button class="btn mini icon-only" id="lpCopy" title="Çıktıyı kopyala">${ICONS.copy}</button>
+      </div>
+      <div class="lp-con" id="lpCon"></div>
+      <div class="lp-add">
+        <input type="text" id="lpNew" placeholder="Başka IP / ad…" autocomplete="off">
+        <button class="btn mini" id="lpAdd">${ICONS.plus} Ekle</button>
+      </div>
+    </aside>
+    </div>`;
 
   const q = (id) => $("#" + id, root);
   const el = {
@@ -369,6 +392,7 @@ export function createPing(ctx) {
         <td class="${ven.sev === "warn" ? "" : ven.sev === "muted" ? "txt-muted" : ""}">${ven.sev === "warn" ? badge(ven) : esc(ven.text)}</td>
         <td>${badge(st)}${r.changed ? ' <span class="badge sev-warn" title="Önceki taramaya göre değişti">değişti</span>' : ""}</td>
         <td class="actions">
+          <button class="btn icon" data-act="live" title="Sürekli ping (ping -t) — sağ panelde açılır">${ICONS.ping}</button>
           <button class="btn icon" data-act="recheck" title="Yeniden kontrol et">${ICONS.redo}</button>
           <button class="btn icon" data-act="copy" title="IP'yi kopyala">${ICONS.copy}</button>
           <button class="btn icon" data-act="ssh" title="SSH ile bağlan (sunucuda terminal açar)">${ICONS.term}</button>
@@ -385,6 +409,7 @@ export function createPing(ctx) {
     const btn = e.target.closest("[data-act]"); if (!btn) return;
     const r = rows[+btn.closest("tr").dataset.id];
     switch (btn.dataset.act) {
+      case "live": openLive(r.ip, r.yatak); break;
       case "recheck": if (!running) runChecks([r], true); break;
       case "copy":
         try { await navigator.clipboard.writeText(r.ip); toast("IP kopyalandı: " + r.ip); } catch { toast("Kopyalanamadı"); }
@@ -395,6 +420,143 @@ export function createPing(ctx) {
       case "web": window.open(`http://${r.ip}/`, "_blank", "noopener"); break;
     }
   });
+
+  // Satıra çift tıklama: o IP için sürekli ping (düğmelerin üzerinde değilse)
+  el.body.addEventListener("dblclick", (e) => {
+    if (e.target.closest("[data-act]")) return;
+    const tr = e.target.closest("tr.item"); if (!tr) return;
+    const r = rows[+tr.dataset.id];
+    window.getSelection()?.removeAllRanges();          // çift tıklamanın seçtiği metni bırak
+    openLive(r.ip, r.yatak);
+  });
+
+  // ── Sürekli ping paneli ─────────────────────────────────────
+  const LP_MAX_LINES = 3000;
+  const lp = {
+    panel: q("lpPanel"), split: q("pSplit"), tabs: q("lpTabs"), stat: q("lpStat"), toggle: q("lpToggle"),
+    clear: q("lpClear"), copy: q("lpCopy"), con: q("lpCon"), input: q("lpNew"), add: q("lpAdd"), closeAll: q("lpCloseAll"),
+  };
+  let live = [];              // [{id, ip, label, lines:[{time,text,kind}], cursor, running, up, sent, received, lost, lastMs, minMs, maxMs, avgMs}]
+  let activeLive = null, pollTimer = null, polling = false;
+
+  async function openLive(ip, label = "") {
+    ip = String(ip || "").trim();
+    if (!ip) return;
+    const existing = live.find((s) => s.ip === ip);
+    if (existing) {
+      activeLive = existing.id;
+      if (!existing.running) await liveAction("resume", existing);
+      renderLive(true);
+      return;
+    }
+    try {
+      const r = await api("/api/ping/live/start", { method: "POST", body: { ip } });
+      live.push({ id: r.id, ip, label, lines: [], cursor: 0, running: true, up: null, sent: 0, received: 0, lost: 0 });
+      activeLive = r.id;
+      renderLive(true);
+      ensurePolling();
+    } catch (e) { toast(e.message, 4000); }
+  }
+
+  async function liveAction(kind, s) {
+    try { await api(`/api/ping/live/${kind}`, { method: "POST", body: { id: s.id } }); } catch (e) { toast(e.message, 4000); }
+    if (kind === "resume") { s.running = true; ensurePolling(); }
+  }
+
+  function closeLive(s) {
+    liveAction("remove", s);
+    live = live.filter((x) => x !== s);
+    if (activeLive === s.id) activeLive = live.at(-1)?.id ?? null;
+    renderLive(true);
+  }
+
+  function ensurePolling() {
+    if (!pollTimer) pollTimer = setInterval(pollLive, 1000);
+  }
+
+  async function pollLive() {
+    if (polling) return;
+    if (live.length === 0) { clearInterval(pollTimer); pollTimer = null; return; }
+    polling = true;
+    try {
+      const cursors = Object.fromEntries(live.map((s) => [s.id, s.cursor]));
+      const r = await api("/api/ping/live/poll", { method: "POST", body: { cursors } });
+      let activeNew = [];
+      for (const u of r.sessions) {
+        const s = live.find((x) => x.id === u.id); if (!s) continue;
+        if (u.gone) { s.running = false; continue; }
+        Object.assign(s, { running: u.running, up: u.up, sent: u.sent, received: u.received, lost: u.lost, lastMs: u.lastMs, minMs: u.minMs, maxMs: u.maxMs, avgMs: u.avgMs });
+        if (u.lines.length) {
+          s.cursor = u.lines.at(-1).seq;
+          s.lines.push(...u.lines);
+          if (s.lines.length > LP_MAX_LINES) s.lines.splice(0, s.lines.length - LP_MAX_LINES);
+          if (s.id === activeLive) activeNew = u.lines;
+        }
+      }
+      renderLive(false, activeNew);
+    } catch { /* ajan geçici olarak yanıt vermedi: bir sonraki turda yeniden denenir */ }
+    finally { polling = false; }
+  }
+
+  const lineHtml = (l) => `<div class="${l.kind}"><span class="t">${esc(l.time)}</span>${esc(l.text) || "&nbsp;"}</div>`;
+
+  /** full: sekmeler ve konsol baştan çizilir; değilse yalnızca yeni satırlar eklenir. */
+  function renderLive(full, newLines = []) {
+    const open = live.length > 0;
+    lp.panel.hidden = !open;
+    lp.split.classList.toggle("live", open);
+    if (!open) return;
+    const s = live.find((x) => x.id === activeLive) ?? live[0];
+    activeLive = s.id;
+
+    lp.tabs.innerHTML = live.map((x) => `<div class="lp-tab" role="tab" data-lid="${x.id}" aria-selected="${x.id === s.id}"
+        title="${esc(x.label ? `${x.label} · ${x.ip}` : x.ip)}">
+        <span class="lp-dot ${x.up === true ? "up" : x.up === false ? "down" : ""}${x.running ? "" : " off"}"></span>${esc(x.ip)}
+        <button class="lp-x" data-close="${x.id}" title="Kapat">✕</button></div>`).join("");
+
+    const pct = s.sent ? Math.round((100 * s.lost) / s.sent) : 0;
+    lp.stat.innerHTML = s.sent
+      ? `<b class="${s.up ? "txt-ok" : "txt-error"}">${s.up ? "Yanıt veriyor" : "Yanıt yok"}</b> · Giden ${s.sent} · Alınan ${s.received} · <span class="${s.lost ? "txt-error" : ""}">Kayıp ${s.lost} (%${pct})</span>${s.avgMs != null ? ` · ort. ${s.avgMs} ms` : ""}`
+      : `<span class="muted">${s.running ? "Başlıyor…" : "Durduruldu"}</span>`;
+    lp.toggle.textContent = s.running ? "Durdur" : "Devam";
+    lp.toggle.title = s.running ? "Ctrl+C gibi: durdurur ve istatistiği yazar" : "Aynı adrese yeniden ping atmaya başlar";
+
+    const atBottom = lp.con.scrollHeight - lp.con.scrollTop - lp.con.clientHeight < 40;
+    if (full || lp.con.dataset.lid !== String(s.id)) {
+      lp.con.dataset.lid = s.id;
+      lp.con.innerHTML = s.lines.map(lineHtml).join("");
+      lp.con.scrollTop = lp.con.scrollHeight;
+    } else if (newLines.length) {
+      lp.con.insertAdjacentHTML("beforeend", newLines.map(lineHtml).join(""));
+      while (lp.con.childElementCount > LP_MAX_LINES) lp.con.firstElementChild.remove();
+      if (atBottom) lp.con.scrollTop = lp.con.scrollHeight;     // kullanıcı yukarı kaydırdıysa yerinde kalsın
+    }
+  }
+
+  lp.tabs.addEventListener("click", (e) => {
+    const x = e.target.closest("[data-close]");
+    if (x) { const s = live.find((v) => v.id === +x.dataset.close); if (s) closeLive(s); return; }
+    const t = e.target.closest("[data-lid]");
+    if (t) { activeLive = +t.dataset.lid; renderLive(true); }
+  });
+  lp.toggle.addEventListener("click", async () => {
+    const s = live.find((x) => x.id === activeLive); if (!s) return;
+    await liveAction(s.running ? "stop" : "resume", s);
+    setTimeout(pollLive, 300);
+  });
+  lp.clear.addEventListener("click", () => {
+    const s = live.find((x) => x.id === activeLive); if (!s) return;
+    s.lines = []; renderLive(true);
+  });
+  lp.copy.addEventListener("click", async () => {
+    const s = live.find((x) => x.id === activeLive); if (!s) return;
+    try { await navigator.clipboard.writeText(s.lines.map((l) => `[${l.time}] ${l.text}`).join("\r\n")); toast("Çıktı kopyalandı"); }
+    catch { toast("Kopyalanamadı"); }
+  });
+  lp.closeAll.addEventListener("click", () => { [...live].forEach(closeLive); });
+  const addFromInput = () => { const v = lp.input.value.trim(); if (v) { openLive(v); lp.input.value = ""; } };
+  lp.add.addEventListener("click", addFromInput);
+  lp.input.addEventListener("keydown", (e) => { if (e.key === "Enter") addFromInput(); });
 
   el.export.addEventListener("click", () => {
     const list = visibleRows();

@@ -387,3 +387,32 @@ td input.cell-edit { width: 100%; height: 26px; padding: 0 6px; }
 .pproc .ph { display: flex; align-items: center; gap: 4px; margin-bottom: 12px; font-size: 15px; }
 tr.item.off td { opacity: .6; }
 .psum { cursor: pointer; padding-bottom: 14px; } .psum:hover { color: var(--accent-text); }
+
+/* ── Ping Kontrol: sürekli ping paneli ("ping ip -t") ─────────── */
+.ping-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.ping-split > * { min-width: 0; }
+.ping-split.live { grid-template-columns: minmax(0, 1fr) 440px; }
+@media (max-width: 1250px) { .ping-split.live { grid-template-columns: minmax(0, 1fr); } }
+.lp { display: flex; flex-direction: column; height: calc(100vh - 150px); min-height: 380px; position: sticky; top: 12px; }
+.lp .card-h { padding-bottom: 8px; }
+.lp-tabs { display: flex; gap: 4px; overflow-x: auto; overflow-y: hidden; padding: 0 12px; border-bottom: 1px solid var(--border); scrollbar-width: thin; flex: none; }
+.lp-tab { display: inline-flex; align-items: center; gap: 7px; padding: 6px 6px 6px 10px; border: 1px solid transparent; border-bottom: 0;
+  border-radius: 8px 8px 0 0; cursor: pointer; white-space: nowrap; color: var(--text-2);
+  font: 12.5px Consolas, "Cascadia Mono", monospace; margin-bottom: -1px; }
+.lp-tab:hover { background: var(--hover); }
+.lp-tab[aria-selected="true"] { background: var(--surface); border-color: var(--border); color: var(--text); font-weight: 600; }
+.lp-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex: none; }
+.lp-dot.up { background: var(--ok); } .lp-dot.down { background: var(--error); }
+.lp-dot.off { opacity: .45; }
+.lp-x { border: 0; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0 4px; font-size: 13px; line-height: 1; border-radius: 5px; }
+.lp-x:hover { color: var(--error-text); background: var(--hover); }
+.lp-bar { display: flex; align-items: center; gap: 6px; padding: 10px 12px; flex-wrap: wrap; font-size: 12.5px; flex: none; }
+.lp-stat { min-width: 0; }
+.lp-con { flex: 1; min-height: 0; overflow: auto; margin: 0 12px; padding: 10px 12px; border-radius: 8px;
+  background: #0C0C0C; color: #CCCCCC; font: 12.5px/1.5 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-all; }
+.lp-con .t { color: #5F6B7A; margin-right: 10px; user-select: none; }
+.lp-con .fail { color: #FF7B72; }
+.lp-con .info { color: #E6EDF3; }
+.lp-add { display: flex; gap: 6px; padding: 10px 12px 12px; flex: none; }
+.lp-add input { flex: 1; height: 28px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; }
+.txt-ok { color: var(--ok-text); }

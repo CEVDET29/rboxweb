@@ -486,6 +486,37 @@ namespace RboxAgent
                     await Reply(res, new { ok }, ok ? 200 : 400);
                     return;
                 }
+
+                // ── Sürekli ping ("ping ip -t" sekmeleri) ─────────────────────
+                case ("POST", "/api/ping/live/start"):
+                {
+                    var b = await Body<IpIn>(req);
+                    var (ok, error, id) = LivePingService.Start(b.Ip);
+                    await Reply(res, ok ? new { ok, id } : new { ok, error }, ok ? 200 : 422);
+                    return;
+                }
+
+                case ("POST", "/api/ping/live/stop"):
+                case ("POST", "/api/ping/live/resume"):
+                case ("POST", "/api/ping/live/remove"):
+                {
+                    var b = await Body<LiveIdIn>(req);
+                    bool ok = path switch
+                    {
+                        "/api/ping/live/stop" => LivePingService.Stop(b.Id),
+                        "/api/ping/live/resume" => LivePingService.Resume(b.Id),
+                        _ => LivePingService.Remove(b.Id),
+                    };
+                    await Reply(res, new { ok });
+                    return;
+                }
+
+                case ("POST", "/api/ping/live/poll"):
+                {
+                    var b = await Body<LivePollIn>(req);
+                    await Reply(res, LivePingService.Poll(b.Cursors));
+                    return;
+                }
             }
 
             await Reply(res, new { error = "Bulunamadı" }, 404);
@@ -493,6 +524,8 @@ namespace RboxAgent
 
         private sealed class IpIn { public string? Ip { get; set; } }
         private sealed class PortQueryIn { public string? Query { get; set; } public string? Host { get; set; } }
+        private sealed class LiveIdIn { public int Id { get; set; } }
+        private sealed class LivePollIn { public Dictionary<string, long>? Cursors { get; set; } }
         private sealed class OpenRequest { public string? Kind { get; set; } public string? Name { get; set; } }
         private sealed class WorkFolderRequest { public string? Path { get; set; } }
         private sealed class SshSettingsIn
