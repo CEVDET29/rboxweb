@@ -499,9 +499,13 @@ export function createUpdate(ctx) {
       if (r.room !== last) {
         last = r.room;
         const m = rows.filter((x) => x.room === r.room);
-        html += `<tr class="group" data-room="${r.room}" style="cursor:pointer"><td colspan="8">
+        const mc = m.filter((x) => x.checked).length;
+        // Oda kutusu: satırlardaki kutuyla aynı sütunda; karışıksa yarı dolu (indeterminate, aşağıda atanır)
+        html += `<tr class="group" data-room="${r.room}" style="cursor:pointer">
+          <td><input type="checkbox" data-roomcheck="${r.room}" ${mc === m.length ? "checked" : ""} data-mixed="${mc > 0 && mc < m.length ? 1 : 0}"
+            ${isBusy() ? "disabled" : ""} title="Bu odadaki tüm cihazları işaretle / kaldır"></td><td colspan="7">
           <span class="gchip" style="background:${["#3B82F6", "#10B981", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6", "#EF4444", "#84CC16"][r.room % 8]}"></span>${room.collapsed ? "▸" : "▾"} ${esc(room.title)}
-          <span class="gcount">${m.length} cihaz · ${m.filter((x) => x.checked).length} işaretli</span></td></tr>`;
+          <span class="gcount">${m.length} cihaz · ${mc} işaretli</span></td></tr>`;
       }
       if (room.collapsed) continue;
       html += `<tr class="item${selected.has(r.id) ? " sel" : ""}" data-id="${r.id}">
@@ -515,6 +519,7 @@ export function createUpdate(ctx) {
         <td class="mono edit" data-edit="eth0">${esc(r.eth0)}</td></tr>`;
     }
     el.body.innerHTML = html;
+    $$("input[data-mixed='1']", el.body).forEach((i) => { i.indeterminate = true; });
     updateUi();
   }
 
@@ -533,6 +538,14 @@ export function createUpdate(ctx) {
   });
 
   el.body.addEventListener("click", (e) => {
+    if (e.target.matches("input[data-roomcheck]")) {
+      // Tıklamadan sonra checked: hiçbiri / karışık → true (hepsini işaretle), hepsi → false
+      if (isBusy()) return;
+      const room = +e.target.dataset.roomcheck, on = e.target.checked;
+      rows.forEach((x) => { if (x.room === room) x.checked = on; });
+      render();
+      return;
+    }
     const g = e.target.closest("tr.group");
     if (g) { const room = rooms[+g.dataset.room]; room.collapsed = !room.collapsed; render(); return; }
 
