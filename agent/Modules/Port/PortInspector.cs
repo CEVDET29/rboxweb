@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Management;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Security;
@@ -227,12 +226,12 @@ namespace RboxAgent.Modules.Port
 
             // Süreç ayrıntıları
             var pidList = rows.Select(r => r.Pid).Concat(namePids).Where(p => p > 0).Distinct().Take(60).ToList();
-            var wmi = ReadWmiProcesses(pidList);
             foreach (var pid in pidList)
             {
-                var pi = ReadProcess(pid, wmi);
+                var pi = ReadProcess(pid);
                 if (pi == null) continue;
                 pi.Services = services.Where(s => s.ProcessId == pid).Select(s => s.Clone()).ToList();
+                foreach (var s in pi.Services) ReadServiceConfig(s);
                 // Yetkisiz okumada (SYSTEM hizmetleri) yol / kullanıcı hizmet kaydından tamamlanır
                 if (pi.Services.Count > 0)
                 {
@@ -530,39 +529,73 @@ namespace RboxAgent.Modules.Port
             finally { CloseHandle(h); }
         }
 
-        private sealed record WmiProc(string CommandLine, string ExecutablePath, string User, int ParentPid);
+        // Süreç sahibi, komut satırı ve üst süreç doğrudan Windows API'siyle okunur (WMI / System.Management
+        // kullanılmaz: ek DLL gerektirmez, eksik kurulumda da çalışır). Yetki yetmezse alan boş kalır.
 
-        private static Dictionary<int, WmiProc> ReadWmiProcesses(List<int> pids)
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool OpenProcessToken(IntPtr process, int access, out IntPtr token);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetTokenInformation(IntPtr token, int cls, IntPtr info, int length, out int returned);
+
+        [DllImport("ntdll.dll")]
+        private static extern int NtQueryInformationProcess(IntPtr process, int cls, IntPtr info, int length, out int returned);
+
+        private static string ProcessOwner(IntPtr h)
         {
-            var map = new Dictionary<int, WmiProc>();
-            if (pids.Count == 0) return map;
+            if (!OpenProcessToken(h, 0x0008 /* TOKEN_QUERY */, out var tok)) return "";
             try
             {
-                var where = string.Join(" OR ", pids.Select(p => "ProcessId=" + p));
-                // Handle (anahtar) seçilmezse nesnenin yolu olmaz ve GetOwner çağrılamaz
-                using var s = new ManagementObjectSearcher($"SELECT Handle, ProcessId, CommandLine, ExecutablePath, ParentProcessId FROM Win32_Process WHERE {where}");
-                s.Options.Timeout = TimeSpan.FromSeconds(8);
-                foreach (ManagementObject o in s.Get())
-                    using (o)
-                    {
-                        int pid = Convert.ToInt32(o["ProcessId"]);
-                        string user = "";
-                        try
-                        {
-                            var args = new object[] { "", "" };
-                            if (Convert.ToInt32(o.InvokeMethod("GetOwner", args)) == 0)
-                                user = (args[1] as string is { Length: > 0 } d ? d + "\\" : "") + args[0];
-                        }
-                        catch { }
-                        map[pid] = new WmiProc(o["CommandLine"] as string ?? "", o["ExecutablePath"] as string ?? "", user,
-                                               Convert.ToInt32(o["ParentProcessId"] ?? 0));
-                    }
+                GetTokenInformation(tok, 1 /* TokenUser */, IntPtr.Zero, 0, out int len);
+                if (len <= 0) return "";
+                var buf = Marshal.AllocHGlobal(len);
+                try
+                {
+                    if (!GetTokenInformation(tok, 1, buf, len, out _)) return "";
+                    var sid = new System.Security.Principal.SecurityIdentifier(Marshal.ReadIntPtr(buf));   // TOKEN_USER.User.Sid
+                    try { return sid.Translate(typeof(System.Security.Principal.NTAccount)).Value; }
+                    catch { return sid.Value; }
+                }
+                finally { Marshal.FreeHGlobal(buf); }
             }
-            catch { /* WMI kapalı / yetki yok: yol ve adla yetinilir */ }
-            return map;
+            catch { return ""; }
+            finally { CloseHandle(tok); }
         }
 
-        private static ProcessDetail? ReadProcess(int pid, Dictionary<int, WmiProc> wmi)
+        /// <summary>ProcessCommandLineInformation (60, Windows 8.1+): UNICODE_STRING + metin.</summary>
+        private static string ProcessCommandLine(IntPtr h)
+        {
+            try
+            {
+                NtQueryInformationProcess(h, 60, IntPtr.Zero, 0, out int len);
+                if (len <= 0 || len > 1 << 20) return "";
+                var buf = Marshal.AllocHGlobal(len);
+                try
+                {
+                    if (NtQueryInformationProcess(h, 60, buf, len, out _) != 0) return "";
+                    int chars = Marshal.ReadInt16(buf) / 2;                 // UNICODE_STRING.Length (bayt)
+                    var text = Marshal.ReadIntPtr(buf, IntPtr.Size);        // UNICODE_STRING.Buffer (hizalı)
+                    return chars > 0 && text != IntPtr.Zero ? Marshal.PtrToStringUni(text, chars) : "";
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>ProcessBasicInformation (0): InheritedFromUniqueProcessId = üst sürecin PID'i.</summary>
+        private static int ParentPid(IntPtr h)
+        {
+            try
+            {
+                int size = IntPtr.Size * 6;
+                var buf = Marshal.AllocHGlobal(size);
+                try { return NtQueryInformationProcess(h, 0, buf, size, out _) == 0 ? (int)Marshal.ReadIntPtr(buf, IntPtr.Size * 5) : 0; }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+            catch { return 0; }
+        }
+
+        private static ProcessDetail? ReadProcess(int pid)
         {
             var d = new ProcessDetail { Pid = pid };
             if (pid == 4) { d.Name = "System"; d.Description = "Windows çekirdeği (http.sys, SMB gibi çekirdek sürücüleri bu kimlikle görünür)"; return d; }
@@ -577,12 +610,18 @@ namespace RboxAgent.Modules.Port
             catch (ArgumentException) { return null; }        // süreç kapanmış
             catch { d.Name = "PID " + pid; }
 
-            wmi.TryGetValue(pid, out var w);
             d.Path = ImagePath(pid);
-            if (d.Path.Length == 0 && w != null) d.Path = w.ExecutablePath;
-            d.CommandLine = w?.CommandLine ?? "";
-            d.User = w?.User ?? "";
-            d.ParentPid = w?.ParentPid ?? 0;
+            var h = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid);
+            if (h != IntPtr.Zero)
+            {
+                try
+                {
+                    d.CommandLine = ProcessCommandLine(h);
+                    d.User = ProcessOwner(h);
+                    d.ParentPid = ParentPid(h);
+                }
+                finally { CloseHandle(h); }
+            }
             FillVersion(d);
             return d;
         }
@@ -610,40 +649,121 @@ namespace RboxAgent.Modules.Port
             return i > 0 ? cmd[..(i + 4)] : cmd;
         }
 
+        // ── Windows hizmetleri (Service Control Manager; yönetici gerekmez) ──
+
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern IntPtr OpenSCManager(string? machine, string? database, int access);
+
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool EnumServicesStatusEx(IntPtr scm, int infoLevel, int serviceType, int serviceState, IntPtr services,
+                                                        int bufSize, out int needed, out int returned, ref int resume, string? group);
+
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern IntPtr OpenService(IntPtr scm, string name, int access);
+
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool QueryServiceConfig(IntPtr service, IntPtr config, int bufSize, out int needed);
+
+        [DllImport("advapi32.dll")]
+        private static extern bool CloseServiceHandle(IntPtr h);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct ENUM_SERVICE_STATUS_PROCESS
+        {
+            public IntPtr ServiceName, DisplayName;
+            public int ServiceType, CurrentState, ControlsAccepted, Win32ExitCode, ServiceSpecificExitCode, CheckPoint, WaitHint, ProcessId, ServiceFlags;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct QUERY_SERVICE_CONFIG
+        {
+            public int ServiceType, StartType, ErrorControl;
+            public IntPtr BinaryPathName, LoadOrderGroup;
+            public int TagId;
+            public IntPtr Dependencies, ServiceStartName, DisplayName;
+        }
+
+        /// <summary>Tüm Win32 hizmetleri: ad, görünen ad, durum, PID. Başlangıç türü / hesap / yol <see cref="ReadServiceConfig"/> ile.</summary>
         private static List<ServiceDetail> ReadServices()
         {
             var list = new List<ServiceDetail>();
+            var scm = OpenSCManager(null, null, 0x0005 /* CONNECT | ENUMERATE_SERVICE */);
+            if (scm == IntPtr.Zero) return list;
             try
             {
-                using var s = new ManagementObjectSearcher("SELECT Name, DisplayName, ProcessId, State, StartMode, StartName, PathName FROM Win32_Service");
-                s.Options.Timeout = TimeSpan.FromSeconds(8);
-                foreach (ManagementObject o in s.Get())
-                    using (o)
-                        list.Add(new ServiceDetail
+                int resume = 0;
+                EnumServicesStatusEx(scm, 0, 0x30 /* SERVICE_WIN32 */, 3 /* ALL */, IntPtr.Zero, 0, out int needed, out _, ref resume, null);
+                for (int attempt = 0; attempt < 3 && needed > 0; attempt++)
+                {
+                    int size = needed + 4096;
+                    var buf = Marshal.AllocHGlobal(size);
+                    try
+                    {
+                        resume = 0;
+                        if (!EnumServicesStatusEx(scm, 0, 0x30, 3, buf, size, out needed, out int count, ref resume, null))
                         {
-                            Name = o["Name"] as string ?? "",
-                            DisplayName = o["DisplayName"] as string ?? "",
-                            ProcessId = Convert.ToInt32(o["ProcessId"] ?? 0),
-                            State = TrState(o["State"] as string ?? ""),
-                            StartMode = TrStart(o["StartMode"] as string ?? ""),
-                            Account = o["StartName"] as string ?? "",
-                            PathName = o["PathName"] as string ?? "",
-                        });
+                            if (Marshal.GetLastWin32Error() == 234 /* ERROR_MORE_DATA */) continue;
+                            break;
+                        }
+                        int stride = Marshal.SizeOf<ENUM_SERVICE_STATUS_PROCESS>();
+                        for (int i = 0; i < count; i++)
+                        {
+                            var e = Marshal.PtrToStructure<ENUM_SERVICE_STATUS_PROCESS>(buf + i * stride);
+                            list.Add(new ServiceDetail
+                            {
+                                Name = Marshal.PtrToStringUni(e.ServiceName) ?? "",
+                                DisplayName = Marshal.PtrToStringUni(e.DisplayName) ?? "",
+                                ProcessId = e.ProcessId,
+                                State = e.CurrentState switch
+                                {
+                                    1 => "Durdu", 2 => "Başlıyor", 3 => "Duruyor", 4 => "Çalışıyor", 5 => "Sürdürülüyor",
+                                    6 => "Duraklatılıyor", 7 => "Duraklatıldı", _ => e.CurrentState.ToString(),
+                                },
+                            });
+                        }
+                        break;
+                    }
+                    finally { Marshal.FreeHGlobal(buf); }
+                }
             }
             catch { }
+            finally { CloseServiceHandle(scm); }
             return list;
         }
 
-        private static string TrState(string s) => s switch
+        /// <summary>Başlangıç türü, çalıştığı hesap ve exe yolu (yalnızca gösterilen hizmetler için okunur).</summary>
+        private static void ReadServiceConfig(ServiceDetail s)
         {
-            "Running" => "Çalışıyor", "Stopped" => "Durdu", "Start Pending" => "Başlıyor", "Stop Pending" => "Duruyor",
-            "Paused" => "Duraklatıldı", _ => s,
-        };
-
-        private static string TrStart(string s) => s switch
-        {
-            "Auto" => "Otomatik", "Manual" => "El ile", "Disabled" => "Devre dışı", "Boot" => "Önyükleme", "System" => "Sistem", _ => s,
-        };
+            var scm = OpenSCManager(null, null, 0x0001 /* CONNECT */);
+            if (scm == IntPtr.Zero) return;
+            var svc = IntPtr.Zero;
+            try
+            {
+                svc = OpenService(scm, s.Name, 0x0001 /* SERVICE_QUERY_CONFIG */);
+                if (svc == IntPtr.Zero) return;
+                QueryServiceConfig(svc, IntPtr.Zero, 0, out int needed);
+                if (needed <= 0) return;
+                var buf = Marshal.AllocHGlobal(needed);
+                try
+                {
+                    if (!QueryServiceConfig(svc, buf, needed, out _)) return;
+                    var c = Marshal.PtrToStructure<QUERY_SERVICE_CONFIG>(buf);
+                    s.StartMode = c.StartType switch
+                    {
+                        0 => "Önyükleme", 1 => "Sistem", 2 => "Otomatik", 3 => "El ile", 4 => "Devre dışı", _ => c.StartType.ToString(),
+                    };
+                    s.Account = Marshal.PtrToStringUni(c.ServiceStartName) ?? "";
+                    s.PathName = Marshal.PtrToStringUni(c.BinaryPathName) ?? "";
+                }
+                finally { Marshal.FreeHGlobal(buf); }
+            }
+            catch { }
+            finally
+            {
+                if (svc != IntPtr.Zero) CloseServiceHandle(svc);
+                CloseServiceHandle(scm);
+            }
+        }
 
         private static Dictionary<string, string> ReverseDns(IEnumerable<string> addrs)
         {
