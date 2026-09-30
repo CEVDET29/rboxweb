@@ -7,6 +7,7 @@ import { createYbdb } from "./ybdb.js";
 import { createUpdate } from "./update.js";
 import { createControl } from "./control.js";
 import { createFiles } from "./files.js";
+import { createPort } from "./port.js";
 
 const MODULES = [
   { id: "ping", title: "Ping Kontrol", icon: ICONS.ping, sub: "Excel listesindeki cihazlara ping, SSH portu ve MAC kontrolü" },
@@ -14,6 +15,7 @@ const MODULES = [
   { id: "control", title: "Cihaz Kontrol", icon: ICONS.control, sub: "Cihazların anlık durumu ve toplu işlemler" },
   { id: "ybdb", title: "YBDB Odalar", icon: ICONS.ybdb, sub: "Oda, yatak ve doluluk durumu" },
   { id: "files", title: "Dosyalar", icon: ICONS.files, sub: "Güncelleme dosyalarını bu hastane için düzenle" },
+  { id: "port", title: "Port Kontrol", icon: ICONS.port, sub: "Portu dinleyen uygulama, uygulamanın portları ve uzak bilgisayarda port durumu" },
 ];
 
 const screens = { gate: $("#gate"), connect: $("#connect"), app: $("#app") };
@@ -152,11 +154,12 @@ function enterApp() {
   views.update = createUpdate(ctx);
   views.control = createControl(ctx);
   views.files = createFiles(ctx);
+  views.port = createPort();
   renderListButton();
   loadSsh();
 
   $("#tabs").innerHTML = MODULES.map((m) =>
-    `<button class="tab${m.soon ? " soon" : ""}" role="tab" data-m="${m.id}" aria-selected="false"${m.soon ? ' title="Bu modül sonraki aşamada eklenecek"' : ""}>${m.icon}<span>${m.title}</span></button>`).join("");
+    `<button class="tab${m.soon ? " soon" : ""}" role="tab" data-m="${m.id}" aria-selected="false" title="${m.soon ? "Bu modül sonraki aşamada eklenecek" : m.title}">${m.icon}<span>${m.title}</span></button>`).join("");
   $("#tabs").addEventListener("click", (e) => { const t = e.target.closest("[data-m]"); if (t) select(t.dataset.m); });
 
   select(storeGet("rbox.module") in Object.fromEntries(MODULES.map((m) => [m.id, 1])) ? storeGet("rbox.module") : "ping");

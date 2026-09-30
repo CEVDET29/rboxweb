@@ -41,8 +41,24 @@ try {
         throw 'RasyoBOX Araclari is running. Close it and run the command again.'
     }
     New-Item -ItemType Directory -Force $Target | Out-Null
-    # Existing files with other names (updateFiles, settings) are left untouched
-    Copy-Item -Path (Join-Path $stage '*') -Destination $Target -Recurse -Force
+    # The zip may carry an updateFiles folder. The hospital's own updateFiles is never overwritten:
+    # if one exists, the downloaded copy goes next to it as "updateFiles_downloaded" for manual comparison.
+    # Existing files with other names (settings etc.) are left untouched
+    Get-ChildItem -LiteralPath $stage | Where-Object { $_.Name -ne 'updateFiles' } |
+        Copy-Item -Destination $Target -Recurse -Force
+    $zipUf = Join-Path $stage 'updateFiles'
+    if (Test-Path -LiteralPath $zipUf) {
+        $ufTarget = Join-Path $Target 'updateFiles'
+        if (Test-Path -LiteralPath $ufTarget) {
+            $side = Join-Path $Target 'updateFiles_downloaded'
+            if (Test-Path -LiteralPath $side) { Remove-Item -LiteralPath $side -Recurse -Force }
+            Copy-Item -LiteralPath $zipUf -Destination $side -Recurse
+            Write-Host "Existing updateFiles left untouched. Downloaded copy: $side" -ForegroundColor Yellow
+        } else {
+            Copy-Item -LiteralPath $zipUf -Destination $ufTarget -Recurse
+            Write-Host "updateFiles copied to: $ufTarget"
+        }
+    }
     Write-Host "Installed to: $Target" -ForegroundColor Green
     Write-Host "Run: $Target\RasyoBOX Araclari.exe"
 }

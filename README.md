@@ -22,6 +22,7 @@ Tarayıcı (github.io'dan gelen arayüz) ─► http://127.0.0.1:47800 ─► Rb
 | Cihaz Güncelleme | ✅ tamam (toplu güncelleme, versiyon kontrol, TTY mesajı, tek cihaz JsonSettings / dhcpcd). Adımlar WPF'teki `UpdateCoordinator` ile aynı kod |
 | Cihaz Kontrol | ✅ tamam (oda gruplu cihaz kartları: sıcaklık, bellek, depolama + genişletme, SerialWorker + sürüm, **USB seri aygıtlar** (USB0/USB1: üretici ve ürün), ağ / Wi-Fi, MAC kontrolü; toplu ve tek cihaz yeniden başlatma, otomatik yenileme, karttan "Güncelle") |
 | Dosyalar | ✅ tamam (updateFiles klasörünü listele / tarayıcıda düzenle / yükle / indir / adı değiştir / sil, "beklenen dosyalar" listesi, zip ile dışa-içe aktarma) |
+| Port Kontrol | ✅ tamam (portu dinleyen uygulama / uygulamanın portları: yol, sürüm, Windows hizmeti, kullanıcı, komut satırı, bağlantılar ve uzak bilgisayar adları, http.sys üzerinden dinleyen asıl süreç, güvenlik duvarı gelen kuralları, SQL Server örnekleri; uzak bilgisayarda port durumu, NetBIOS / DNS adı, işletim sistemi tahmini, MAC, SSH / HTTP / TLS tanıtımı). WPF ile aynı `PortInspector.cs`; salt okunur |
 
 **Tüm web modülleri tamamlandı.**
 
@@ -88,7 +89,12 @@ masaüstü sürümü komutu kopyalanır. PowerShell'e yapıştırılınca `tools
 
 Zip'i hazırlamak ve yayınlamak (yalnızca sürüm değişince):
 
-1. `tools\publish-desktop.ps1` → `dist\RboxTools-desktop.zip` (Release, framework-dependent, ~6 MB).
+1. `tools\publish-desktop.ps1` → `dist\RboxTools-desktop.zip` (Release, framework-dependent, ~7 MB).
+   `dist\updateFiles` klasörü varsa zip'e **kopyalanır** (klasöre dokunulmaz; `Güncelleme Raporu.txt` alınmaz).
+   Kurulumda hedefte `updateFiles` yoksa oraya konur; varsa hastanenin klasörüne dokunulmaz, indirilen kopya
+   `updateFiles_downloaded` adıyla yanına konur.
+   > ⚠ `wpa_supplicant.txt` Wi-Fi şifresini, `JsonSettings.txt` sunucu IP'sini içerir. Repo herkese açıksa release
+   > dosyaları da herkese açıktır; bu zip'i yüklemeden önce bunu göz önünde bulundurun.
 2. GitHub → Releases → **Draft a new release** → tag: `desktop` → zip'i ekle → **Set as a pre-release** işaretle → Publish.
    (Pre-release işaretlenmezse bu release "latest" olur ve `start-agent.ps1`'in indirdiği `RboxAgent.zip` bulunamaz.)
    Güncellemek için aynı release'te zip'i silip yenisini yükleyin.

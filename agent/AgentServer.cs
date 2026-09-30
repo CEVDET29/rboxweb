@@ -6,6 +6,7 @@ using System.Text.Json;
 using RboxAgent.Modules.Ping;
 using RboxAgent.Modules.Control;
 using RboxAgent.Modules.Files;
+using RboxAgent.Modules.Port;
 using RboxAgent.Modules.Update;
 using RboxAgent.Modules.Ybdb;
 
@@ -198,6 +199,15 @@ namespace RboxAgent
                     if (b.Pass != null) ssh.PassProtected = DataStore.Protect(b.Pass);   // "" → parola silinir
                     DataStore.Save();
                     await Reply(res, new { ok = true });
+                    return;
+                }
+
+                // ── Port Kontrol (salt okunur) ────────────────────────────────
+                case ("POST", "/api/port/inspect"):
+                {
+                    var b = await Body<PortQueryIn>(req);
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+                    await Reply(res, await PortInspector.InspectAsync(b.Query, b.Host, cts.Token));
                     return;
                 }
 
@@ -482,6 +492,7 @@ namespace RboxAgent
         }
 
         private sealed class IpIn { public string? Ip { get; set; } }
+        private sealed class PortQueryIn { public string? Query { get; set; } public string? Host { get; set; } }
         private sealed class OpenRequest { public string? Kind { get; set; } public string? Name { get; set; } }
         private sealed class WorkFolderRequest { public string? Path { get; set; } }
         private sealed class SshSettingsIn
