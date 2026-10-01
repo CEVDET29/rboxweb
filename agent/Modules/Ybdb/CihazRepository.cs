@@ -65,9 +65,17 @@ namespace RboxAgent.Modules.Ybdb
         }
 
         /// <summary>Yeni satır ekler ve Id'sini döner. Id kimlik (IDENTITY) sütunu değilse en büyük Id + 1 kilitli olarak verilir.</summary>
-        public async Task<int> InsertAsync(CihazKaydi k, CancellationToken ct = default)
+        public async Task<int> InsertAsync(CihazKaydi k, CancellationToken ct = default) =>
+            (await InsertManyAsync(new[] { k }, ct))[0];
+
+        /// <summary>
+        /// Birden çok satırı TEK işlemde ekler (toplu ekleme): biri hata verirse hiçbiri eklenmez. Eklenen Id'leri sırayla döner.
+        /// </summary>
+        public async Task<List<int>> InsertManyAsync(IReadOnlyList<CihazKaydi> list, CancellationToken ct = default)
         {
-            Validate(k);
+            foreach (var k in list) Validate(k);
+            var ids = new List<int>(list.Count);
+            if (list.Count == 0) return ids;
             await using var con = new SqlConnection(connectionString);
             await con.OpenAsync(ct);
             await using var tx = (SqlTransaction)await con.BeginTransactionAsync(ct);
@@ -76,28 +84,32 @@ namespace RboxAgent.Modules.Ybdb
             await using (var c = new SqlCommand("SELECT COLUMNPROPERTY(OBJECT_ID('dbo.Cihaz'), 'Id', 'IsIdentity');", con, tx))
                 identity = Convert.ToInt32(await c.ExecuteScalarAsync(ct) ?? 0) == 1;
 
-            int id;
-            if (identity)
+            foreach (var k in list)
             {
-                await using var c = new SqlCommand(
-                    @"INSERT INTO [dbo].[Cihaz] ([Adi],[CTS],[IP],[Port],[YatakId])
-                      OUTPUT INSERTED.[Id] VALUES (@Adi,@Cts,@Ip,@Port,@Yatak);", con, tx);
-                AddValues(c, k);
-                id = Convert.ToInt32(await c.ExecuteScalarAsync(ct));
-            }
-            else
-            {
-                // Aynı anda iki ekleme aynı Id'yi almasın: tablo aralığı işlem bitene kadar kilitli
-                await using (var c = new SqlCommand("SELECT ISNULL(MAX([Id]), 0) + 1 FROM [dbo].[Cihaz] WITH (UPDLOCK, HOLDLOCK);", con, tx))
+                int id;
+                if (identity)
+                {
+                    await using var c = new SqlCommand(
+                        @"INSERT INTO [dbo].[Cihaz] ([Adi],[CTS],[IP],[Port],[YatakId])
+                          OUTPUT INSERTED.[Id] VALUES (@Adi,@Cts,@Ip,@Port,@Yatak);", con, tx);
+                    AddValues(c, k);
                     id = Convert.ToInt32(await c.ExecuteScalarAsync(ct));
-                await using var ins = new SqlCommand(
-                    @"INSERT INTO [dbo].[Cihaz] ([Id],[Adi],[CTS],[IP],[Port],[YatakId]) VALUES (@Id,@Adi,@Cts,@Ip,@Port,@Yatak);", con, tx);
-                ins.Parameters.AddWithValue("@Id", id);
-                AddValues(ins, k);
-                await ins.ExecuteNonQueryAsync(ct);
+                }
+                else
+                {
+                    // Aynı anda iki ekleme aynı Id'yi almasın: tablo aralığı işlem bitene kadar kilitli
+                    await using (var c = new SqlCommand("SELECT ISNULL(MAX([Id]), 0) + 1 FROM [dbo].[Cihaz] WITH (UPDLOCK, HOLDLOCK);", con, tx))
+                        id = Convert.ToInt32(await c.ExecuteScalarAsync(ct));
+                    await using var ins = new SqlCommand(
+                        @"INSERT INTO [dbo].[Cihaz] ([Id],[Adi],[CTS],[IP],[Port],[YatakId]) VALUES (@Id,@Adi,@Cts,@Ip,@Port,@Yatak);", con, tx);
+                    ins.Parameters.AddWithValue("@Id", id);
+                    AddValues(ins, k);
+                    await ins.ExecuteNonQueryAsync(ct);
+                }
+                ids.Add(id);
             }
             await tx.CommitAsync(ct);
-            return id;
+            return ids;
         }
 
         /// <summary>Satırı günceller; okunduğu haliyle değilse yazmaz ve CihazConflictException fırlatır.</summary>
