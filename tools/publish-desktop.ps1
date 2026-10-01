@@ -35,7 +35,9 @@ $zip = Join-Path $web 'dist\RboxTools-desktop.zip'
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip
 $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
+$ver = (Get-Item -LiteralPath (Join-Path $out "RasyoBOX Araclari.exe")).VersionInfo.FileVersion
 Write-Host "Hazir: $zip ($mb MB)"
+Write-Host "Surum: $ver"
 
 # Herkese acik release icin updateFiles'siz kopya (ayni ad: install-desktop.ps1 bu adi indirir)
 $pubDir = Join-Path $web 'dist\public'

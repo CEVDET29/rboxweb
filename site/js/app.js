@@ -8,6 +8,7 @@ import { createUpdate } from "./update.js";
 import { createControl } from "./control.js";
 import { createFiles } from "./files.js";
 import { createPort } from "./port.js";
+import { SITE } from "./version.js";
 
 const MODULES = [
   { id: "ping", title: "Ping Kontrol", icon: ICONS.ping, sub: "Excel listesindeki cihazlara ping, SSH portu ve MAC kontrolü" },
@@ -139,8 +140,9 @@ const devices = { rows: [], fileName: "" };
 
 function enterApp() {
   show("app");
-  $("#agentName").textContent = agent.info.machine;
+  $("#agentName").innerHTML = `${esc(agent.info.machine)} <b>· ajan ${esc(agent.info.version)}</b>`;
   $("#agentPill").title = `Ajan ${agent.info.version} · ${agent.info.machine}`;
+  checkAgentVersion();
   if (entered) return;
   entered = true;
 
@@ -337,6 +339,54 @@ $("#themeList").addEventListener("click", (e) => {
 document.addEventListener("click", (e) => { if (!themePop.hidden && !e.target.closest("#themePop, #btnTheme")) themePop.hidden = true; });
 darkQuery.addEventListener("change", () => { if (themeChoice() === "system") applyTheme("system"); });
 applyTheme(themeChoice());
+
+// ── Sürüm bilgisi ────────────────────────────────────────────
+// Arayüz: pages.yml her yayında version.js'i doldurur (boşsa yerel çalışma). Logonun altında gösterilir; tarayıcı
+// eski sürümü önbellekten verdiyse tarih eski kalır. Sayfa açıkken yeni yayın çıkarsa "Yeni sürüm · yenile" belirir.
+$("#siteVer").textContent = SITE.date ? `· web ${SITE.date}` : "· web (yerel)";
+$("#siteVer").title = SITE.commit ? `Arayüz yayını ${SITE.date} (commit ${SITE.commit})` : "Arayüz yerelden çalışıyor (GitHub yayını değil)";
+
+async function checkSiteUpdate() {
+  if (!SITE.commit) return;
+  try {
+    const v = await (await fetch(`version.json?t=${Date.now()}`, { cache: "no-store" })).json();
+    if (v.commit && v.commit !== SITE.commit) {
+      $("#siteUpdate").hidden = false;
+      $("#siteUpdate").title = `Yeni arayüz yayınlandı (${v.date}). Tıklayınca sayfa yeniden yüklenir.`;
+    }
+  } catch { /* çevrimdışı / dosya yok */ }
+}
+$("#siteUpdate").addEventListener("click", () => location.reload());
+setInterval(checkSiteUpdate, 5 * 60 * 1000);
+addEventListener("focus", checkSiteUpdate);
+
+/** GitHub'daki son ajan sürümü (yalnızca github.io'dan açılınca; depo adresten çıkarılır). */
+let latestAgent = null;
+async function checkAgentVersion() {
+  const pill = $("#agentPill");
+  const cur = agent.info?.version;
+  if (!cur || !location.hostname.endsWith(".github.io")) return;
+  try {
+    if (!latestAgent) {
+      const owner = location.hostname.split(".")[0], repo = location.pathname.split("/").filter(Boolean)[0];
+      if (!repo) return;
+      const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } });
+      if (!r.ok) return;
+      latestAgent = String((await r.json()).tag_name || "").replace(/^v/, "");
+    }
+    const older = compareVer(cur, latestAgent) < 0;
+    pill.classList.toggle("old", older);
+    pill.title = older
+      ? `Ajan ${cur} eski: GitHub'da ${latestAgent} var. Ajan penceresini kapatıp başlatma komutunu yeniden çalıştırın (yeni sürüm iner).`
+      : `Ajan ${cur} · güncel · ${agent.info.machine}`;
+    if (older) toast(`Ajan güncel değil (${cur} → ${latestAgent}). Ajan penceresini kapatıp başlatma komutunu yeniden çalıştırın.`, 8000);
+  } catch { /* GitHub'a ulaşılamadı: sessiz geç */ }
+}
+function compareVer(a, b) {
+  const pa = String(a).split(/[.+-]/).map((x) => parseInt(x, 10) || 0), pb = String(b).split(/[.+-]/).map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+  return 0;
+}
 
 $("#btnCompact").addEventListener("click", () => {
   const on = document.body.classList.toggle("compact");

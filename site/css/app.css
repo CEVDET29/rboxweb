@@ -145,7 +145,7 @@ button, input, select { font: inherit; color: inherit; }
 .tab.soon[aria-selected="true"] { opacity: 1; }
 .agent-pill { flex: none; white-space: nowrap; }
 /* Dar ekranda (AnyDesk 1280/1366) 6 sekme sığsın: seçili olmayanlar yalnızca simge, adı ipucunda */
-@media (max-width: 1400px) { .tab { padding: 9px 10px; } .tab:not([aria-selected="true"]) span { display: none; } }
+@media (max-width: 1580px) { .tab { padding: 9px 10px; } .tab:not([aria-selected="true"]) span { display: none; } }
 @media (max-width: 1150px) { .agent-pill span { display: none; } }
 @media (max-width: 900px) { .topbar-row { flex-wrap: wrap; } }
 .spacer { flex: 1; }
@@ -475,3 +475,9 @@ tr.item.off td { opacity: .6; }
 /* Cihaz listesi düğmesindeki "listeyi kaldır" */
 .list-x { margin-left: 8px; padding: 0 5px; border-radius: 5px; font-size: 11px; color: var(--header-sub); }
 .list-x:hover { background: var(--header-btn-hover); color: var(--header-text); }
+
+/* Sürüm bilgisi (logonun altında) ve ajan sürüm uyarısı */
+.site-ver { font-weight: 500; letter-spacing: 0; margin-left: 6px; opacity: .85; }
+.agent-pill.old { border-color: #FBBF24; color: #FDE68A; }
+.agent-pill.old i { background: #FBBF24; box-shadow: 0 0 0 3px rgba(251,191,36,.25); }
+.agent-pill b { font-weight: 500; opacity: .8; margin-left: 2px; }

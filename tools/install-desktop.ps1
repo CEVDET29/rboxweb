@@ -60,6 +60,8 @@ try {
         }
     }
     Write-Host "Installed to: $Target" -ForegroundColor Green
+    $ver = (Get-Item -LiteralPath (Join-Path $Target "RasyoBOX Araclari.exe")).VersionInfo.FileVersion
+    Write-Host "Version: $ver (also shown in the title bar)" -ForegroundColor Green
     Write-Host "Run: $Target\RasyoBOX Araclari.exe"
 }
 catch {

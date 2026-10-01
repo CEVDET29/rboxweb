@@ -24,6 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Arayüz sürümü: yayın zamanı + commit. Sayfa bunu logonun altında gösterir; version.json yeni yayını haber verir.
+      - name: Write version info
+        run: |
+          D=$(TZ=Europe/Istanbul date +"%d.%m.%Y %H:%M")
+          C=$(git rev-parse --short HEAD)
+          printf 'export const SITE = { date: "%s", commit: "%s" };\n' "$D" "$C" > site/js/version.js
+          printf '{"date":"%s","commit":"%s"}\n' "$D" "$C" > site/version.json
+          cat site/js/version.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
