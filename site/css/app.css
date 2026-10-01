@@ -481,3 +481,11 @@ tr.item.off td { opacity: .6; }
 .agent-pill.old { border-color: #FBBF24; color: #FDE68A; }
 .agent-pill.old i { background: #FBBF24; box-shadow: 0 0 0 3px rgba(251,191,36,.25); }
 .agent-pill b { font-weight: 500; opacity: .8; margin-left: 2px; }
+
+/* ── YBDB: Cihaz tablosu düzenleyici ──────────────────────────── */
+.cz-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
+.cz-grid > * { min-width: 0; }
+@media (max-width: 1100px) { .cz-grid { grid-template-columns: minmax(0, 1fr); } }
+.cz-form { position: sticky; top: 12px; }
+.cz-form .field-label { margin-top: 10px; }
+.cz-form .field-label:first-child { margin-top: 0; }

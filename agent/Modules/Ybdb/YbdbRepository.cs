@@ -42,6 +42,9 @@ namespace RboxAgent.Modules.Ybdb
 
         public YbdbRepository(string connectionString) => _connectionString = connectionString;
 
+        /// <summary>Cihaz tablosu düzenleme (CihazRepository) aynı bağlantıyı kullanır.</summary>
+        public string ConnectionString => _connectionString;
+
         public static string BuildConnectionString(string server, string user, string password)
         {
             if (string.IsNullOrWhiteSpace(server))

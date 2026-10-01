@@ -1,6 +1,7 @@
 // YBDB Odalar modülü: SQL Server'daki oda / yatak kayıtları ve doluluk (salt okunur). WPF YbdbView karşılığı.
 import { api } from "./api.js";
 import { $, esc, debounce, toast, unitColor, ICONS } from "./util.js";
+import { createCihazEditor } from "./ybdbcihaz.js";
 
 const DASH = "—";
 
@@ -61,6 +62,12 @@ export function createYbdb() {
       </div>
     </section>
 
+    <div class="seg" role="tablist" id="ySeg">
+      <button role="tab" data-ytab="oda" aria-selected="true">${ICONS.ybdb} Odalar ve yataklar</button>
+      <button role="tab" data-ytab="cihaz" aria-selected="false">${ICONS.control} Cihazlar</button>
+    </div>
+
+    <div class="stack" id="yOdaView">
     <section class="card" id="ySummary" hidden>
       <div class="card-b row" style="gap:32px;padding-top:16px;align-items:center">
         <div class="card-h" style="padding:0">Doluluk</div>
@@ -99,7 +106,9 @@ export function createYbdb() {
           <colgroup><col style="width:70px"><col><col style="width:80px"><col style="width:80px"><col style="width:80px"><col style="width:135px"><col style="width:100px"><col style="width:80px"></colgroup>
           <thead><tr id="yYatakHead"></tr></thead><tbody id="yYatakBody"></tbody></table></div>
       </section>
-    </div>`;
+    </div>
+    </div>
+    <div id="yCihazView" hidden></div>`;
 
   const q = (id) => $("#" + id, root);
   const el = {
@@ -110,6 +119,19 @@ export function createYbdb() {
     title: q("yYatakTitle"), ozet: q("yYatakOzet"), all: q("yAll"), yatakSearch: q("yYatakSearch"),
     bosOnly: q("yBosOnly"), yatakHead: q("yYatakHead"), yatakBody: q("yYatakBody"),
   };
+
+  // ── Cihazlar sekmesi (dbo.Cihaz: ekle / güncelle / sil) ─────────
+  let ytab = "oda";
+  const cz = createCihazEditor({ getYataklar: () => data?.yataklar ?? [] });
+  q("yCihazView").append(cz.root);
+  q("ySeg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-ytab]"); if (!b || b.dataset.ytab === ytab) return;
+    ytab = b.dataset.ytab;
+    root.querySelectorAll("[data-ytab]").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.ytab === ytab)));
+    q("yOdaView").hidden = ytab !== "oda";
+    q("yCihazView").hidden = ytab !== "cihaz";
+    if (ytab === "cihaz" && connected) cz.load();
+  });
 
   // ── Bağlantı ────────────────────────────────────────────────
   function setState(text, sev) {
@@ -160,6 +182,7 @@ export function createYbdb() {
       cfg.hasPass = el.remember.checked && (cfg.hasPass || !!body.pass);
       el.pass.value = ""; el.pass.placeholder = cfg.hasPass ? "••••••••" : "";
       setState(`Bağlı · ${r.server}`, "ok");
+      cz.reset();
       setBusy(false);
       await refresh();
     } catch (e) {
@@ -179,6 +202,8 @@ export function createYbdb() {
       if (selectedOda != null && !data.odalar.some((o) => o.id === selectedOda)) selectedOda = null;   // oda artık yok
       el.last.textContent = `Son güncelleme: ${data.zaman}`;
       renderAll();
+      cz.yataklarChanged();
+      if (ytab === "cihaz") { setBusy(false); await cz.load(); }
     } catch (e) {
       showError(e.message);
     } finally {

@@ -18,7 +18,7 @@ Tarayıcı (github.io'dan gelen arayüz) ─► http://127.0.0.1:47800 ─► Rb
 | Modül | Web'de |
 |---|---|
 | Ping Kontrol | ✅ tamam (Excel, ping, SSH portu, ARP/SSH ile MAC, üretici, izleme modu, filtre/arama/sıralama, CSV; satıra çift tıklayınca sağda **sürekli ping** ("ping ip -t", her IP bir sekme)) |
-| YBDB Odalar | ✅ tamam (SQL Server bağlantısı, doluluk özeti, oda / yatak tabloları, oda seçince süzme, arama, sıralama) |
+| YBDB Odalar | ✅ tamam (SQL Server bağlantısı, doluluk özeti, oda / yatak tabloları, oda seçince süzme, arama, sıralama; **Cihazlar** sekmesi: dbo.Cihaz satırlarını ekle / güncelle / sil — yalnızca Id, Adi, CTS, IP, Port, YatakId; başkası değiştirdiyse yazmaz; silme gerçek DELETE) |
 | Cihaz Güncelleme | ✅ tamam (toplu güncelleme, versiyon kontrol, TTY mesajı, tek cihaz JsonSettings / dhcpcd). Adımlar WPF'teki `UpdateCoordinator` ile aynı kod |
 | Cihaz Kontrol | ✅ tamam (oda gruplu cihaz kartları: sıcaklık, bellek, depolama + genişletme, SerialWorker + sürüm, **USB seri aygıtlar** (USB0/USB1: üretici ve ürün), ağ / Wi-Fi, MAC kontrolü; toplu ve tek cihaz yeniden başlatma, otomatik yenileme, karttan "Güncelle") |
 | Dosyalar | ✅ tamam (updateFiles klasörünü listele / tarayıcıda düzenle / yükle / indir / adı değiştir / sil, "beklenen dosyalar" listesi, zip ile dışa-içe aktarma) |
@@ -43,7 +43,7 @@ klasörü zip olarak dışa/içe aktarır (başka hastaneye taşımak için; zip
 JsonSettings / serialdevices.json / dhcpcd / wpa_supplicant seçeneklerine (Cihaz Güncelleme) çift tıklamak ya da kalem düğmesi
 dosyayı **sunucuda** Notepad++ / Not Defteri ile açar; dosya yoksa "yok" rozeti çıkar.
 
-YBDB parolası ajanda yalnızca bellekte tutulur; "Şifreyi hatırla" açıksa DPAPI ile şifreli saklanır. Tarayıcıya geri gönderilmez.
+YBDB'de yalnızca dbo.Cihaz tablosuna yazılır (Cihazlar sekmesi); oda / yatak / hasta tabloları salt okunur. Bağlanan SQL kullanıcısının bu tabloda yazma yetkisi olmalıdır. YBDB parolası ajanda yalnızca bellekte tutulur; "Şifreyi hatırla" açıksa DPAPI ile şifreli saklanır. Tarayıcıya geri gönderilmez.
 
 ## Güvenlik
 

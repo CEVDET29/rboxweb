@@ -21,13 +21,15 @@ namespace RboxAgent.Modules.Ybdb
     public sealed record BolumDto(string Ad, int Renk);
     public sealed record YbdbData(List<OdaDto> Odalar, List<YatakDto> Yataklar, List<BolumDto> Bolumler, string Zaman);
 
-    /// <summary>YBDB (SQL Server) salt-okunur erişim. Bağlantı dizesi yalnızca bellekte tutulur.</summary>
+    /// <summary>YBDB (SQL Server) erişimi: oda / yatak salt okunur, yalnızca Cihaz tablosuna yazılır. Bağlantı dizesi yalnızca bellekte tutulur.</summary>
     public static class YbdbService
     {
         private static YbdbRepository? _repo;
         private static string _server = "";
 
         public static bool Connected => _repo != null;
+        /// <summary>Bağlıyken Cihaz tablosu düzenleyicisi (aynı bağlantı).</summary>
+        public static CihazRepository? Cihazlar => _repo == null ? null : new CihazRepository(_repo.ConnectionString);
         public static string ConnectedServer => _server;
 
         /// <summary>Bu PC'nin IPv4 adresi: önce Wi-Fi, yoksa Ethernet (WPF sürümündeki varsayılan sunucu).</summary>

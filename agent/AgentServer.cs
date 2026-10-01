@@ -243,6 +243,41 @@ namespace RboxAgent
                     return;
                 }
 
+                // ── YBDB Cihaz tablosu (ekle / güncelle / sil) ────────────────
+                case ("GET", "/api/ybdb/cihaz"):
+                {
+                    if (YbdbService.Cihazlar is not { } repo) { await Reply(res, new { error = "Bağlı değil." }, 409); return; }
+                    try { await Reply(res, new { cihazlar = await repo.ListAsync(), zaman = DateTime.Now.ToString("dd.MM.yyyy HH:mm:ss") }); }
+                    catch (Exception ex) { await Reply(res, new { error = YbdbRepository.FriendlyError(ex) }, 422); }
+                    return;
+                }
+
+                case ("POST", "/api/ybdb/cihaz"):
+                {
+                    if (YbdbService.Cihazlar is not { } repo) { await Reply(res, new { error = "Bağlı değil." }, 409); return; }
+                    var b = await Body<CihazSaveIn>(req);
+                    if (b.Changed == null) { await Reply(res, new { error = "Eksik veri." }, 400); return; }
+                    try
+                    {
+                        // original yoksa yeni kayıt; varsa okunduğu haliyle karşılaştırılarak güncellenir
+                        int id = b.Original == null ? await repo.InsertAsync(b.Changed) : b.Original.Id;
+                        if (b.Original != null) await repo.UpdateAsync(b.Original, b.Changed);
+                        await Reply(res, new { ok = true, id });
+                    }
+                    catch (Exception ex) { await Reply(res, new { error = CihazRepository.FriendlyWriteError(ex) }, 422); }
+                    return;
+                }
+
+                case ("POST", "/api/ybdb/cihaz/delete"):
+                {
+                    if (YbdbService.Cihazlar is not { } repo) { await Reply(res, new { error = "Bağlı değil." }, 409); return; }
+                    var b = await Body<CihazSaveIn>(req);
+                    if (b.Original == null) { await Reply(res, new { error = "Eksik veri." }, 400); return; }
+                    try { await repo.DeleteAsync(b.Original); await Reply(res, new { ok = true }); }
+                    catch (Exception ex) { await Reply(res, new { error = CihazRepository.FriendlyWriteError(ex) }, 422); }
+                    return;
+                }
+
                 // ── Cihaz Güncelleme ──────────────────────────────────────────
                 case ("GET", "/api/update/info"):
                     await Reply(res, UpdateService.Info());
@@ -525,6 +560,7 @@ namespace RboxAgent
         private sealed class IpIn { public string? Ip { get; set; } }
         private sealed class PortQueryIn { public string? Query { get; set; } public string? Host { get; set; } }
         private sealed class LiveIdIn { public int Id { get; set; } }
+        private sealed class CihazSaveIn { public CihazKaydi? Original { get; set; } public CihazKaydi? Changed { get; set; } }
         private sealed class LivePollIn { public Dictionary<string, long>? Cursors { get; set; } }
         private sealed class OpenRequest { public string? Kind { get; set; } public string? Name { get; set; } }
         private sealed class WorkFolderRequest { public string? Path { get; set; } }
