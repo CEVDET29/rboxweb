@@ -278,6 +278,16 @@ namespace RboxAgent
                     return;
                 }
 
+                case ("POST", "/api/ybdb/cihaz/bulk"):
+                {
+                    if (YbdbService.Cihazlar is not { } repo) { await Reply(res, new { error = "Bağlı değil." }, 409); return; }
+                    var b = await Body<CihazBulkIn>(req);
+                    if (b.Rows == null || b.Rows.Count == 0) { await Reply(res, new { error = "Eklenecek kayıt yok." }, 400); return; }
+                    try { var ids = await repo.InsertManyAsync(b.Rows); await Reply(res, new { ok = true, ids }); }
+                    catch (Exception ex) { await Reply(res, new { error = CihazRepository.FriendlyWriteError(ex) }, 422); }
+                    return;
+                }
+
                 // ── Cihaz Güncelleme ──────────────────────────────────────────
                 case ("GET", "/api/update/info"):
                     await Reply(res, UpdateService.Info());
@@ -561,6 +571,7 @@ namespace RboxAgent
         private sealed class PortQueryIn { public string? Query { get; set; } public string? Host { get; set; } }
         private sealed class LiveIdIn { public int Id { get; set; } }
         private sealed class CihazSaveIn { public CihazKaydi? Original { get; set; } public CihazKaydi? Changed { get; set; } }
+        private sealed class CihazBulkIn { public List<CihazKaydi>? Rows { get; set; } }
         private sealed class LivePollIn { public Dictionary<string, long>? Cursors { get; set; } }
         private sealed class OpenRequest { public string? Kind { get; set; } public string? Name { get; set; } }
         private sealed class WorkFolderRequest { public string? Path { get; set; } }

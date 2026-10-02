@@ -483,9 +483,10 @@ tr.item.off td { opacity: .6; }
 .agent-pill b { font-weight: 500; opacity: .8; margin-left: 2px; }
 
 /* ── YBDB: Cihaz tablosu düzenleyici ──────────────────────────── */
-.cz-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
-.cz-grid > * { min-width: 0; }
-@media (max-width: 1100px) { .cz-grid { grid-template-columns: minmax(0, 1fr); } }
-.cz-form { position: sticky; top: 12px; }
-.cz-form .field-label { margin-top: 10px; }
-.cz-form .field-label:first-child { margin-top: 0; }
+/* WPF ile aynı düzen: solda form, ortada tablo (en fazla 820 px), sağda toplu ekle */
+.cz3 { display: grid; grid-template-columns: 330px minmax(0, 820px) minmax(300px, 380px); gap: 16px; align-items: start; }
+.cz3 > * { min-width: 0; }
+@media (max-width: 1400px) { .cz3 { grid-template-columns: 320px minmax(0, 1fr); } .cz3 > :last-child { grid-column: 1 / -1; } }
+@media (max-width: 900px) { .cz3 { grid-template-columns: minmax(0, 1fr); } }
+.cz-side .field-label { margin-top: 10px; }
+.cz-side .card-b > .field-label:first-child, .cz-side #czFields > .field-label:first-child { margin-top: 0; }
