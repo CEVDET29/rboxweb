@@ -13,6 +13,14 @@ namespace RboxAgent.Modules.Files
         public bool Bom { get; set; }
     }
 
+    public sealed class FetchRequest
+    {
+        /// <summary>Sayfanın deposu (kullanici/depo); boşsa ajanın --repo değeri.</summary>
+        public string? Repo { get; set; }
+        /// <summary>true: var olan dosyaların da üzerine yaz; false: yalnızca eksikleri ekle.</summary>
+        public bool Overwrite { get; set; }
+    }
+
     public sealed class RenameRequest
     {
         public string? From { get; set; }
@@ -20,8 +28,9 @@ namespace RboxAgent.Modules.Files
     }
 
     /// <summary>
-    /// updateFiles klasörünün yönetimi (listele, düzenle, yükle, indir, sil, zip). Her yol klasörün İÇİNDE kalmak zorundadır.
-    /// Hastaneye özel içerik olduğu için bu klasör hiçbir yere gönderilmez; yalnızca kullanıcının tarayıcısıyla konuşur.
+    /// updateFiles klasörünün yönetimi (listele, düzenle, yükle, indir, sil, zip, GitHub'dan indir).
+    /// Her yol klasörün İÇİNDE kalmak zorundadır. Ortak paket GitHub'daki "updatefiles" sürümünden gelir;
+    /// klasör hiçbir yere gönderilmez (yalnızca kullanıcının tarayıcısıyla konuşur).
     /// </summary>
     internal static class FilesService
     {
@@ -228,28 +237,109 @@ namespace RboxAgent.Modules.Files
             try
             {
                 await using (var fs = File.Create(tmp)) await body.CopyToAsync(fs);
-                using var zip = ZipFile.OpenRead(tmp);
+                var r = ExtractZip(tmp, overwrite: true);
+                return (r.ok, r.error, r.added);
+            }
+            finally { try { File.Delete(tmp); } catch { } }
+        }
 
-                // Önce hepsini doğrula: bir girdi bile geçersizse hiçbir şey yazılmaz
+        /// <summary>
+        /// Zip'i klasöre açar. overwrite=false ise var olan dosyalar atlanır (hastaneye göre düzenlenmiş JsonSettings vb. korunur).
+        /// Tüm girdiler tek bir "updateFiles/" klasöründeyse o önek atılır. Önce hepsi doğrulanır: biri geçersizse hiçbir şey yazılmaz.
+        /// </summary>
+        private static (bool ok, string? error, int added, int skipped) ExtractZip(string zipPath, bool overwrite)
+        {
+            try
+            {
+                using var zip = ZipFile.OpenRead(zipPath);
+                var entries = zip.Entries
+                    .Where(e => !(e.FullName.EndsWith('/') || e.FullName.EndsWith('\\') || e.Name.Length == 0))
+                    .ToList();
+                if (entries.Count == 0) return (false, "Zip içinde dosya yok.", 0, 0);
+
+                const string prefix = "updateFiles/";
+                bool strip = entries.All(e => e.FullName.Replace('\\', '/').StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
                 var plan = new List<(ZipArchiveEntry entry, string dest)>();
-                foreach (var e in zip.Entries)
+                foreach (var e in entries)
                 {
-                    if (e.FullName.EndsWith('/') || e.FullName.EndsWith('\\') || e.Name.Length == 0) continue;
-                    plan.Add((e, Resolve(e.FullName)));
+                    string name = e.FullName.Replace('\\', '/');
+                    if (strip) name = name[prefix.Length..];
+                    plan.Add((e, Resolve(name)));
                 }
-                if (plan.Count == 0) return (false, "Zip içinde dosya yok.", 0);
 
+                int added = 0, skipped = 0;
                 foreach (var (entry, dest) in plan)
                 {
+                    if (!overwrite && File.Exists(dest)) { skipped++; continue; }
                     Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                     entry.ExtractToFile(dest, overwrite: true);
+                    added++;
                 }
-                return (true, null, plan.Count);
+                return (true, null, added, skipped);
             }
-            catch (InvalidDataException) { return (false, "Geçerli bir zip dosyası değil.", 0); }
-            catch (InvalidOperationException ex) { return (false, "Zip reddedildi: " + ex.Message, 0); }
-            catch (Exception ex) { return (false, "İçe aktarılamadı: " + ex.Message, 0); }
-            finally { try { File.Delete(tmp); } catch { } }
+            catch (InvalidDataException) { return (false, "Geçerli bir zip dosyası değil.", 0, 0); }
+            catch (InvalidOperationException ex) { return (false, "Zip reddedildi: " + ex.Message, 0, 0); }
+            catch (Exception ex) { return (false, "İçe aktarılamadı: " + ex.Message, 0, 0); }
+        }
+
+        // ── GitHub'dan indirme ───────────────────────────────────────────
+
+        /// <summary>Ajanın başlatıldığı depo (--repo); sayfa kendi deposunu da gönderebilir.</summary>
+        public static string? Repo { get; set; }
+
+        public const string ReleaseTag = "updatefiles";
+        public const string PackageName = "updateFiles.zip";
+
+        public static bool IsRepo(string? s) =>
+            s != null && System.Text.RegularExpressions.Regex.IsMatch(s, @"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$");
+
+        /// <summary>Klasör yok ya da içinde hiç dosya yok.</summary>
+        public static bool IsEmpty()
+        {
+            try
+            {
+                string r = Path.GetFullPath(UpdateService.WorkFolder);
+                return !Directory.Exists(r) || !Directory.EnumerateFiles(r, "*", SearchOption.AllDirectories).Any();
+            }
+            catch { return false; }
+        }
+
+        private static readonly SemaphoreSlim FetchLock = new(1, 1);
+
+        /// <summary>
+        /// github.com/&lt;depo&gt;/releases/download/updatefiles/updateFiles.zip paketini indirip klasöre açar.
+        /// Adres sabittir; yalnızca depo adı değişir (doğrulanmış biçimde).
+        /// </summary>
+        public static async Task<(bool ok, string? error, int added, int skipped)> FetchFromGitHubAsync(string? repo, bool overwrite)
+        {
+            repo = IsRepo(repo) ? repo : Repo;
+            if (repo == null) return (false, "GitHub deposu bilinmiyor (ajanı sayfadaki komutla başlatın).", 0, 0);
+            if (!await FetchLock.WaitAsync(0)) return (false, "İndirme zaten sürüyor.", 0, 0);
+
+            string url = $"https://github.com/{repo}/releases/download/{ReleaseTag}/{PackageName}";
+            // Yalnızca test için (start-agent.ps1 -ZipUrl gibi): paketi başka bir adresten al
+            if (Environment.GetEnvironmentVariable("RBOX_UPDATEFILES_URL") is { Length: > 0 } testUrl) url = testUrl;
+            string tmp = Path.Combine(Path.GetTempPath(), $"rboxfiles_{Guid.NewGuid():N}.zip");
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
+                http.DefaultRequestHeaders.UserAgent.ParseAdd("RboxAgent");
+                using var res = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+                if (res.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    return (false, $"GitHub'da paket yok: {repo} deposunda \"{ReleaseTag}\" sürümüne {PackageName} yüklenmemiş.", 0, 0);
+                if (!res.IsSuccessStatusCode) return (false, $"GitHub yanıtı: {(int)res.StatusCode} {res.ReasonPhrase}", 0, 0);
+
+                await using (var fs = File.Create(tmp)) await res.Content.CopyToAsync(fs);
+                return ExtractZip(tmp, overwrite);
+            }
+            catch (TaskCanceledException) { return (false, "GitHub'a bağlanırken zaman aşımı.", 0, 0); }
+            catch (HttpRequestException ex) { return (false, "GitHub'a ulaşılamadı: " + ex.Message, 0, 0); }
+            finally
+            {
+                try { File.Delete(tmp); } catch { }
+                FetchLock.Release();
+            }
         }
     }
 }

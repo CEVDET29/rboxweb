@@ -1,5 +1,5 @@
 // Dosyalar modülü: Cihaz Güncelleme'nin cihaza gönderdiği dosyalar (updateFiles) — listele, düzenle, yükle, indir, sil, zip.
-// Bu dosyalar hastaneye özeldir: yalnızca bu bilgisayardaki ajanla konuşulur, hiçbir yere gönderilmez.
+// Ortak paket GitHub'daki "updatefiles" sürümünden (updateFiles.zip) indirilir; klasör boşsa kendiliğinden, sonra düğmeyle.
 import { api, blob } from "./api.js";
 import { $, $$, esc, toast, ICONS } from "./util.js";
 
@@ -59,7 +59,12 @@ export function createFiles(ctx) {
           <button class="btn" id="fUseWpf" hidden></button>
         </div>
         <div class="txt-error sm" id="fErr" style="margin-top:8px" hidden></div>
-        <div class="sm muted" style="margin-top:10px">Bu klasördeki dosyalar hastaneye özeldir: yalnızca bu bilgisayardaki ajanla konuşulur, hiçbir yere gönderilmez. GitHub'a koymayın.</div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" id="fFetch" title="GitHub'daki updateFiles paketinden yalnızca bu klasörde olmayan dosyaları ekler">${ICONS.down} GitHub'dan eksikleri indir</button>
+          <button class="btn" id="fFetchAll" title="GitHub'daki paketin tamamını indirir; aynı adlı dosyaların üzerine yazar">Tümünü GitHub'dan yenile</button>
+          <span class="sm muted" id="fFetchMsg"></span>
+        </div>
+        <div class="sm muted" style="margin-top:10px">Klasör boşsa paket GitHub'dan kendiliğinden indirilir. Var olan dosyalara (ör. bu hastane için düzenlenmiş JsonSettings) yalnızca "Tümünü yenile" dokunur.</div>
       </div>
     </section>
 
@@ -117,10 +122,46 @@ export function createFiles(ctx) {
   const showErr = (m) => { el.err.textContent = m || ""; el.err.hidden = !m; };
 
   // ── Listeleme ───────────────────────────────────────────────
+  let autoFetched = false;
   async function load() {
     try { info = await api("/api/files/list"); } catch (e) { toast(e.message, 4000); return; }
     render();
+    // Klasör boşsa (yeni sunucu ya da yeni seçilen klasör) paketi bir kez kendiliğinden indir
+    if (info.files.length === 0 && !autoFetched) { autoFetched = true; await fetchFromGitHub(false); }
   }
+
+  // ── GitHub'dan indirme ──────────────────────────────────────
+  // Sayfa github.io'dan açıldıysa deposunu ajana bildirir; ajandan (127.0.0.1) açıldıysa ajan kendi --repo değerini kullanır.
+  const pageRepo = (() => {
+    const m = location.hostname.match(/^([\w-]+)\.github\.io$/i);
+    const r = location.pathname.split("/").filter(Boolean)[0];
+    return m && r ? `${m[1]}/${r}` : null;
+  })();
+
+  let fetching = false;
+  async function fetchFromGitHub(overwrite) {
+    if (fetching) return;
+    fetching = true;
+    const msg = $("#fFetchMsg", root);
+    msg.textContent = "GitHub'dan indiriliyor…";
+    $("#fFetch", root).disabled = $("#fFetchAll", root).disabled = true;
+    try {
+      const r = await api("/api/files/fetch", { method: "POST", body: { repo: pageRepo, overwrite } });
+      msg.textContent = `${r.added} dosya indirildi` + (r.skipped ? ` · ${r.skipped} dosya zaten vardı, dokunulmadı` : "");
+    } catch (e) { msg.textContent = e.message; }
+    finally {
+      fetching = false;
+      $("#fFetch", root).disabled = $("#fFetchAll", root).disabled = false;
+    }
+    try { info = await api("/api/files/list"); render(); } catch { /* liste sonra yenilenir */ }
+  }
+
+  $("#fFetch", root).addEventListener("click", () => fetchFromGitHub(false));
+  $("#fFetchAll", root).addEventListener("click", () => {
+    if (!confirm("GitHub'daki paketin tamamı indirilsin mi?\n\nAynı adlı dosyaların (ör. bu hastane için düzenlenmiş JsonSettings, wpa_supplicant) üzerine yazılır.")) return;
+    if (editing && dirty() && !confirm("Düzenleyicide kaydedilmemiş değişiklik var; kaybolabilir. Devam edilsin mi?")) return;
+    fetchFromGitHub(true);
+  });
 
   const find = (p) => info.files.find((f) => f.path.toLowerCase() === p.toLowerCase());
 

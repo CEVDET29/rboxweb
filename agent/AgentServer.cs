@@ -493,6 +493,14 @@ namespace RboxAgent
                     return;
                 }
 
+                case ("POST", "/api/files/fetch"):
+                {
+                    var b = await Body<FetchRequest>(req);
+                    var (ok, error, added, skipped) = await FilesService.FetchFromGitHubAsync(b?.Repo, b?.Overwrite == true);
+                    await Reply(res, new { ok, error = error ?? "", added, skipped }, ok ? 200 : 422);
+                    return;
+                }
+
                 // ── Ping çalıştırma (satır satır akan JSON) ──────────────────
                 case ("POST", "/api/ping/run"):
                 {

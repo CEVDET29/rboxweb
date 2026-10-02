@@ -11,6 +11,7 @@ namespace RboxAgent
     ///   --token ABC123                         sabit kod (geliştirme için; verilmezse her açılışta rastgele)
     ///   --site &lt;klasör&gt;                        arayüzü ajandan da sun (varsayılan: exe'nin yanındaki "site")
     ///   --no-browser                           tarayıcıyı otomatik açma
+    ///   --repo kullanici/depo                  updateFiles paketinin indirileceği GitHub deposu
     /// </summary>
     internal sealed class AgentOptions
     {
@@ -22,6 +23,8 @@ namespace RboxAgent
         public string? OpenUrl { get; private set; }
         /// <summary>Cihaz Güncelleme dosyalarının klasörü (updateFiles). Boşsa %AppData%\RboxAgent\updateFiles.</summary>
         public string? WorkFolder { get; private set; }
+        /// <summary>GitHub deposu (kullanici/depo): updateFiles paketi bu deponun "updatefiles" sürümünden indirilir.</summary>
+        public string? Repo { get; private set; }
 
         public static AgentOptions Parse(string[] args)
         {
@@ -40,6 +43,7 @@ namespace RboxAgent
                     if (cfg.AllowedOrigins != null) o.AllowedOrigins.AddRange(cfg.AllowedOrigins);
                     if (!string.IsNullOrWhiteSpace(cfg.OpenUrl)) o.OpenUrl = cfg.OpenUrl;
                     if (!string.IsNullOrWhiteSpace(cfg.WorkFolder)) o.WorkFolder = cfg.WorkFolder;
+                    if (!string.IsNullOrWhiteSpace(cfg.Repo)) o.Repo = cfg.Repo;
                 }
                 catch { /* bozuk dosya yok sayılır */ }
             }
@@ -57,8 +61,10 @@ namespace RboxAgent
                     case "--open": o.OpenUrl = Next(); break;
                     case "--work": o.WorkFolder = Next(); break;
                     case "--no-browser": o.OpenBrowser = false; break;
+                    case "--repo": o.Repo = Next(); break;
                 }
             }
+            if (o.Repo != null && !RboxAgent.Modules.Files.FilesService.IsRepo(o.Repo)) o.Repo = null;
 
             if (o.SiteFolder == null)
             {
@@ -83,6 +89,7 @@ namespace RboxAgent
             public List<string>? AllowedOrigins { get; set; }
             public string? OpenUrl { get; set; }
             public string? WorkFolder { get; set; }
+            public string? Repo { get; set; }
         }
     }
 
@@ -95,6 +102,7 @@ namespace RboxAgent
 
             var opts = AgentOptions.Parse(args);
             if (!string.IsNullOrWhiteSpace(opts.WorkFolder)) RboxAgent.Modules.Update.UpdateService.ExplicitFolder = Path.GetFullPath(opts.WorkFolder);
+            RboxAgent.Modules.Files.FilesService.Repo = opts.Repo;
             var server = new AgentServer(opts);
             try { server.Start(); }
             catch (Exception ex)
@@ -126,6 +134,18 @@ namespace RboxAgent
                 Console.WriteLine("  UYARI: izinli web adresi yok. --origin https://kullanici.github.io ile başlatın.");
             Console.WriteLine("  Kapatmak için bu pencereyi kapatın (Ctrl+C).");
             Console.WriteLine();
+
+            // updateFiles klasörü boşsa paketi GitHub'dan kendiliğinden indir (yalnızca eksikler; var olana dokunmaz)
+            if (opts.Repo != null && RboxAgent.Modules.Files.FilesService.IsEmpty())
+            {
+                _ = Task.Run(async () =>
+                {
+                    var r = await RboxAgent.Modules.Files.FilesService.FetchFromGitHubAsync(null, overwrite: false);
+                    Console.WriteLine(r.ok
+                        ? $"  updateFiles GitHub'dan indirildi: {r.added} dosya → {RboxAgent.Modules.Update.UpdateService.WorkFolder}"
+                        : "  updateFiles indirilemedi: " + r.error);
+                });
+            }
 
             string? open = opts.OpenUrl ?? (opts.SiteFolder != null ? self : null);
             if (opts.OpenBrowser && open != null)

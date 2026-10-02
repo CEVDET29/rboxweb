@@ -40,7 +40,7 @@ Expand-Archive $zip -DestinationPath $dir -Force
 $exe = Join-Path $dir 'RboxAgent.exe'
 if ($Token) {
     # The page that generated the command is already open and knows the code: connect to it, do not open another tab
-    & $exe --origin $Origin --token $Token --no-browser
+    & $exe --origin $Origin --repo $Repo --token $Token --no-browser
 } else {
-    & $exe --origin $Origin --open $pageUrl
+    & $exe --origin $Origin --repo $Repo --open $pageUrl
 }
