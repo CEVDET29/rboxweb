@@ -483,8 +483,9 @@ tr.item.off td { opacity: .6; }
 .agent-pill b { font-weight: 500; opacity: .8; margin-left: 2px; }
 
 /* ── YBDB: Cihaz tablosu düzenleyici ──────────────────────────── */
-/* WPF ile aynı düzen: solda form, ortada tablo (en fazla 820 px), sağda toplu ekle */
-.cz3 { display: grid; grid-template-columns: 330px minmax(0, 820px) minmax(300px, 380px); gap: 16px; align-items: start; }
+/* WPF ile aynı düzen: solda form, ortada tablo, sağda toplu ekle.
+   Üç sütun oranlı büyür: geniş/tam ekranda sağda boşluk kalmaz */
+.cz3 { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(0, 2.4fr) minmax(300px, 1.15fr); gap: 16px; align-items: start; }
 .cz3 > * { min-width: 0; }
 @media (max-width: 1400px) { .cz3 { grid-template-columns: 320px minmax(0, 1fr); } .cz3 > :last-child { grid-column: 1 / -1; } }
 @media (max-width: 900px) { .cz3 { grid-template-columns: minmax(0, 1fr); } }
