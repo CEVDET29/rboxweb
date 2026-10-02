@@ -18,9 +18,21 @@ export const agent = {
 
 function lost(reason) { listeners.forEach((fn) => fn(reason)); }
 
-async function hello(origin, withToken) {
+/**
+ * Chrome/Edge 142+: herkese açık bir sitenin 127.0.0.1'e erişmesi kullanıcı iznine bağlı ("Yerel ağ erişimi";
+ * 145+ "loopback-network"). İzin durumunu döndürür: "granted" | "prompt" | "denied" | null (tarayıcı bilmiyor).
+ */
+export async function loopbackPermission() {
+  if (/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) return null;   // sayfa ajandan açıldıysa izin gerekmez
+  for (const name of ["loopback-network", "local-network-access"]) {
+    try { return (await navigator.permissions.query({ name })).state; } catch { /* bu adı tanımıyor */ }
+  }
+  return null;
+}
+
+async function hello(origin, withToken, timeoutMs = 2500) {
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), 900);
+  const t = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const r = await fetch(origin + "/api/hello", {
       signal: ctl.signal,
@@ -42,10 +54,14 @@ export async function discover() {
   if (/^(127\.0\.0\.1|localhost)$/.test(location.hostname) && location.port) candidates.push(location.origin);
   for (let i = 0; i < PORT_COUNT; i++) candidates.push(`http://127.0.0.1:${FIRST_PORT + i}`);
 
+  // İzin sorusu açıkken istek, kullanıcı yanıtlayana kadar bekler: ilk denemeyi kısa sürede kesersek
+  // soru kapanır ve bağlantı hiç kurulamaz. Bu yüzden izin henüz verilmemişse ilk adreste uzun bekle.
+  const firstWait = (await loopbackPermission()) === "prompt" ? 60000 : 2500;
+
   // Birden fazla ajan çalışıyorsa (ör. eskisi açık kalmış) kodumuzu kabul edeni seç; yoksa bulunan ilkini
   let first = null;
-  for (const origin of [...new Set(candidates)]) {
-    const info = await hello(origin, true);
+  for (const [i, origin] of [...new Set(candidates)].entries()) {
+    const info = await hello(origin, true, i === 0 ? firstWait : 2500);
     if (!info) continue;
     if (info.authorized) { base = origin; agent.info = info; return info; }
     first ??= { origin, info };

@@ -112,6 +112,10 @@ button, input, select { font: inherit; color: inherit; }
 }
 .steps { margin: 0 0 16px; padding-left: 20px; color: var(--text-2); }
 .steps li { margin-bottom: 6px; }
+.cn-help { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: var(--subtle); color: var(--text-2); }
+.cn-help p { margin: 0 0 6px; }
+.cn-help p:last-child { margin-bottom: 0; }
+.cn-help a { white-space: nowrap; }
 .codebox { letter-spacing: .3em; text-align: center; font: 600 22px Consolas, monospace; text-transform: uppercase; }
 
 .logo { display: flex; align-items: center; gap: 11px; }

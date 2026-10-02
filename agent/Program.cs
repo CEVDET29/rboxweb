@@ -119,6 +119,8 @@ namespace RboxAgent
             Console.WriteLine();
             Console.WriteLine("  Tarayıcı kodla birlikte açılır ve kendiliğinden bağlanır. Bağlanmazsa bu kodu sayfaya yazın.");
             Console.WriteLine("  Ajan her açılışta yeni kod üretir.");
+            if (opts.SiteFolder != null)
+                Console.WriteLine("  Sayfa ajanı bulamazsa (tarayıcı engeli) arayüzü buradan açın: " + self);
             Console.WriteLine("  Verilerin (ayarlar, şifreli parolalar): " + DataStore.Folder);
             if (opts.AllowedOrigins.Count == 0 && opts.SiteFolder == null)
                 Console.WriteLine("  UYARI: izinli web adresi yok. --origin https://kullanici.github.io ile başlatın.");

@@ -1,6 +1,6 @@
 // Kabuk: giriş şifresi → ajan bağlantısı → modül sekmeleri, tema, kompakt görünüm, ortak cihaz listesi.
 import { PASSWORD_SHA256 } from "./config.js";
-import { agent, discover, setToken, checkToken, api } from "./api.js";
+import { agent, discover, setToken, checkToken, api, loopbackPermission } from "./api.js";
 import { $, esc, sha256Hex, storeGet, storeSet, sessionGet, sessionSet, toast, debounce, ICONS } from "./util.js";
 import { createPing } from "./ping.js";
 import { createYbdb } from "./ybdb.js";
@@ -45,14 +45,19 @@ async function connectFlow() {
   show("connect");
   $("#cnNone").hidden = false;
   $("#cnCode").hidden = true;
-  $("#cnScan").textContent = "Aranıyor…";
+  const perm = await loopbackPermission();
+  $("#cnScan").textContent = perm === "prompt"
+    ? "Aranıyor… Tarayıcı \"yerel ağ / bu cihazdaki uygulamalar\" için izin sorarsa İzin ver'e basın."
+    : "Aranıyor…";
 
   const info = await discover();
   if (!info) {
     $("#cnScan").textContent = "Ajan bulunamadı. Çalıştırdıysanız birkaç saniye içinde otomatik yeniden denenecek.";
+    showConnectHelp(await loopbackPermission());
     scanTimer = setTimeout(connectFlow, 3000);
     return;
   }
+  $("#cnHelp").hidden = true;
   if (await checkToken()) return enterApp();
 
   $("#cnNone").hidden = true;
@@ -64,6 +69,23 @@ async function connectFlow() {
 }
 
 $("#cnRetry").addEventListener("click", connectFlow);
+
+// Ajan penceresi açık olduğu hâlde bulunamıyorsa çoğunlukla tarayıcı engelliyordur (Chrome/Edge 142+ yerel ağ izni,
+// ya da kurum politikası). İzni nasıl açacağını ve son çare olarak arayüzü ajanın kendisinden açmayı gösterir.
+function showConnectHelp(perm) {
+  if (/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) { $("#cnHelp").hidden = true; return; }
+  const local = "http://127.0.0.1:47800/" + (launchToken ? `#code=${launchToken}` : "");
+  const denied = perm === "denied"
+    ? `<p><b>Tarayıcı bu sitenin bilgisayardaki uygulamalara erişimini engelliyor.</b> Adres çubuğunun solundaki simgeye
+       tıklayın → <b>Site ayarları</b> → <b>Yerel ağ erişimi</b> (ya da <b>Bu cihazdaki uygulamalar</b>) → <b>İzin ver</b>,
+       sonra sayfayı yenileyin. Ayar kilitliyse kurum politikası engelliyordur; aşağıdaki yolu kullanın.</p>`
+    : `<p>Ajan penceresi açık ve kod göründüğü hâlde bağlanmıyorsa tarayıcı erişimi engelliyor olabilir: adres çubuğunda
+       izin sorusu ya da engel simgesi varsa <b>İzin ver</b>'e basın.</p>`;
+  $("#cnHelp").innerHTML = denied +
+    `<p>Olmazsa arayüzü ajandan açın (aynı arayüz, izin gerekmez):
+     <a href="${esc(local)}" target="_blank" rel="noopener">http://127.0.0.1:47800/</a></p>`;
+  $("#cnHelp").hidden = false;
+}
 
 // ── Ajanı başlatma yardımcıları ───────────────────────────────
 // Tarayıcı program başlatamaz; bu yüzden hazır komutu kopyalatır ya da çift tıklanacak bir .bat indirtiriz.
@@ -113,17 +135,19 @@ if (repo) {
   });
 }
 
-// Kod kutusu: konsoldan kopyalanan boşlukları / fazlalıkları temizler, ABC-123 biçimine getirir,
-// 6 karakter tamamlanınca kendiliğinden bağlanır.
+// Kod kutusu: konsoldan kopyalanan boşlukları / fazlalıkları temizler. Ajanın kendi kodu 6 karakter (ABC-123),
+// "Komutu kopyala" ile başlatılan ajanın kodu 12 karakter; ikisinde de tamamlanınca kendiliğinden bağlanır.
 $("#cnToken").addEventListener("input", (e) => {
-  const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
-  e.target.value = raw.length > 3 ? `${raw.slice(0, 3)}-${raw.slice(3)}` : raw;
-  if (raw.length === 6) $("#cnCode").requestSubmit();
+  const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+  e.target.value = raw.length > 3 && raw.length <= 6 ? `${raw.slice(0, 3)}-${raw.slice(3)}` : raw;
+  if (raw.length === 6 || raw.length === 12) $("#cnCode").requestSubmit();
 });
 
 $("#cnCode").addEventListener("submit", async (e) => {
   e.preventDefault();
-  setToken($("#cnToken").value);
+  // 6 karakterlik kod ajanda ABC-123 biçiminde tutulur; 12 karakterlik kodda tire yok
+  const raw = $("#cnToken").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  setToken(raw.length === 6 ? `${raw.slice(0, 3)}-${raw.slice(3)}` : raw);
   if (await checkToken()) { $("#cnErr").textContent = ""; enterApp(); }
   else $("#cnErr").textContent = "Kod hatalı. Ajan penceresindeki kodu kontrol edin.";
 });
