@@ -308,6 +308,7 @@ namespace RboxAgent
                     u.TtyText = b.TtyText ?? u.TtyText;
                     u.Wlan0Mask = b.Wlan0Mask ?? u.Wlan0Mask; u.Wlan0Gateway = b.Wlan0Gateway ?? u.Wlan0Gateway;
                     u.Eth0Mask = b.Eth0Mask ?? u.Eth0Mask; u.Eth0Gateway = b.Eth0Gateway ?? u.Eth0Gateway;
+                    u.SequentialIpFill = b.SequentialIpFill;
                     u.SingleTargetIp = b.SingleTargetIp ?? u.SingleTargetIp; u.SingleServerIp = b.SingleServerIp ?? u.SingleServerIp;
                     u.SingleEth0Ip = b.SingleEth0Ip ?? u.SingleEth0Ip; u.SingleEth0Mask = b.SingleEth0Mask ?? u.SingleEth0Mask;
                     u.SingleWlan0Ip = b.SingleWlan0Ip ?? u.SingleWlan0Ip; u.SingleWlan0Mask = b.SingleWlan0Mask ?? u.SingleWlan0Mask;

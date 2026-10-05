@@ -313,6 +313,15 @@ input:disabled, select:disabled { opacity: .5; }
 
 tr.item.sel td { background: var(--row-selected); }
 td.edit { cursor: text; }
+td.auto-ip { color: var(--text-2); font-style: italic; }
+/* IP hücresindeki "kopyala" düğmesi: satır üzerine gelince belirginleşir */
+.ipcell { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+.copy-ip { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px;
+  background: transparent; color: var(--text-2); opacity: .5; cursor: pointer; }
+.copy-ip svg { width: 13px; height: 13px; }
+tr.item:hover .copy-ip, tr.item.sel .copy-ip, .copy-ip:focus-visible { opacity: 1; }
+.copy-ip:hover { background: var(--hover); color: var(--accent-text); }
+.copy-ip.done { opacity: 1; color: var(--ok-text); }
 td input.cell-edit { width: 100%; height: 26px; padding: 0 6px; }
 .link { background: none; border: 0; color: var(--accent-text); cursor: pointer; font-weight: 600; padding: 4px 6px; }
 .link:hover { text-decoration: underline; }

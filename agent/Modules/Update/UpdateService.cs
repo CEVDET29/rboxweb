@@ -177,16 +177,18 @@ namespace RboxAgent.Modules.Update
             var redact = MakeRedact(pass);
             var reporter = new Reporter(sink, redact);
             var logger = new FileReportLogger(reporter, WorkFolder) { Redact = s => redact(s) };
-            var coordinator = new UpdateCoordinator(WorkFolder, reporter, logger);
+            // Adımların doğrudan ekrana yazdığı mesajlar (SSH bağlanamadı vb.) rapora da düşsün
+            var coordinator = new UpdateCoordinator(WorkFolder, logger.Tee(reporter), logger);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(sink.Broken);
             Runs[runId] = cts;
             var ct = cts.Token;
             int parallel = Math.Clamp(req.Parallel, 1, 100);
-            int total = req.Targets.Count, done = 0;
+            int total = req.Targets.Count, done = 0, okCount = 0, failCount = 0;
 
             sink.Emit(new { type = "start", runId, total });
             reporter.Set("", $"Güncelleme başladı... ({total} cihaz, {parallel} paralel)");
+            await logger.BeginRunAsync(total, parallel);
 
             void Progress() => sink.Emit(new { type = "progress", done = Interlocked.Increment(ref done), total });
 
@@ -208,13 +210,22 @@ namespace RboxAgent.Modules.Update
                         sink.Emit(new { type = "targetStart", id = t.Id });
                         bool ok = await coordinator.UpdateSingleIpAsync(t.Ip, user, pass, req.Options, t.YatakId, Blank(t.Wlan0), Blank(t.Eth0), ct);
                         sink.Emit(new { type = "targetResult", id = t.Id, ok });
-                        await logger.AppendAsync(string.Empty);
+                        bool? result = ok ? true : ct.IsCancellationRequested ? null : false;
+                        if (result == true) Interlocked.Increment(ref okCount);
+                        else if (result == false) Interlocked.Increment(ref failCount);
+                        await logger.DeviceResultAsync(t.Ip, result);
                     }
-                    catch (OperationCanceledException) { sink.Emit(new { type = "targetResult", id = t.Id, ok = false }); }
+                    catch (OperationCanceledException)
+                    {
+                        sink.Emit(new { type = "targetResult", id = t.Id, ok = false });
+                        await logger.DeviceResultAsync(t.Ip, null);
+                    }
                     catch (Exception ex)
                     {
                         sink.Emit(new { type = "targetResult", id = t.Id, ok = false });
-                        reporter.Set(t.Ip, "Hata: " + ex.Message, StatusKind.Error);
+                        Interlocked.Increment(ref failCount);
+                        await logger.LogAsync(t.Ip, "Hata: " + ex.Message, StatusKind.Error);
+                        await logger.DeviceResultAsync(t.Ip, false);
                     }
                     finally
                     {
@@ -231,7 +242,7 @@ namespace RboxAgent.Modules.Update
             {
                 bool cancelled = ct.IsCancellationRequested;
                 Runs.TryRemove(runId, out _);
-                await logger.AppendAsync(cancelled ? "İptal edildi!" : "Tüm cihazlar işlendi.");
+                await logger.EndRunAsync(okCount, failCount, total - okCount - failCount, cancelled);
                 reporter.Set("", cancelled ? "Güncelleme iptal edildi." : "Güncelleme tamamlandı.",
                     cancelled ? StatusKind.Warn : StatusKind.Success);
                 sink.Emit(new { type = "done", cancelled });

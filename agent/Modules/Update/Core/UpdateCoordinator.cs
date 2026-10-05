@@ -1792,7 +1792,7 @@ namespace RboxAgent.Modules.Update.Core
             }
             catch (OperationCanceledException)
             {
-                await _logger.AppendAsync("Güncelleme iptal edildi.");
+                await _logger.LogAsync(ip, "Güncelleme iptal edildi.", StatusKind.Warn);
                 return false;
             }
             catch (Exception ex)
@@ -1816,8 +1816,7 @@ namespace RboxAgent.Modules.Update.Core
                          ex is SshOperationTimeoutException ? "SSH zaman aşımı." :
                          ex is SshConnectionException ? "SSH bağlantı kurulamadı." :
                          $"SSH hatası: {ex.Message}";
-            _status.Set(host, msg, StatusKind.Error);
-            _ = _logger.AppendAsync($"[SSH] {msg}");
+            _status.Set(host, msg, StatusKind.Error); // FileReportLogger.Tee: rapora da yazılır
         }
 
         private static async Task<bool> HasSshBannerAsync(string host, int port = 22, int timeoutMs = 1500)

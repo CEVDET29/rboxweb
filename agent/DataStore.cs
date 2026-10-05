@@ -98,6 +98,8 @@ namespace RboxAgent
         public string Wlan0Gateway { get; set; } = "192.168.1.1";
         public string Eth0Mask { get; set; } = "255.255.255.0";
         public string Eth0Gateway { get; set; } = "192.168.1.1";
+        /// <summary>Tabloda wlan0 / eth0 girilince alttaki satırları sıradaki IP'lerle doldur.</summary>
+        public bool SequentialIpFill { get; set; } = true;
 
         // Tek cihaz sekmesi
         public string SingleTargetIp { get; set; } = "172.16.154.254";

@@ -1,6 +1,6 @@
 // Ping Kontrol modülü: Excel'deki cihazlara ping, SSH portu ve MAC kontrolü (WPF PingView karşılığı).
 import { api, stream } from "./api.js";
-import { $, $$, esc, debounce, toast, downloadCsv, ICONS } from "./util.js";
+import { $, $$, esc, debounce, toast, copyText, downloadCsv, ICONS } from "./util.js";
 
 const ROOM_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6", "#EF4444", "#84CC16"];
 const DASH = "—";
@@ -386,7 +386,7 @@ export function createPing(ctx) {
       html += `<tr class="item${r.changed ? " changed" : ""}" data-id="${r.id}">
         <td>${esc(r.yatak) || DASH}</td>
         <td>${esc(r.yatakId) || DASH}</td>
-        <td class="mono">${esc(r.ip)}</td>
+        <td class="mono"><span class="ipcell">${esc(r.ip)}<button class="copy-ip" data-act="copy" title="IP adresini kopyala">${ICONS.copy}</button></span></td>
         <td class="mono ${r.macInvalid ? "txt-error" : ""}" title="${r.macInvalid ? "Geçersiz MAC" : ""}">${esc(r.mac) || DASH}</td>
         <td>${badge(ping)}</td>
         <td>${badge(ssh)}</td>
@@ -414,7 +414,7 @@ export function createPing(ctx) {
       case "live": openLive(r.ip, r.yatak); break;
       case "recheck": if (!running) runChecks([r], true); break;
       case "copy":
-        try { await navigator.clipboard.writeText(r.ip); toast("IP kopyalandı: " + r.ip); } catch { toast("Kopyalanamadı"); }
+        try { await copyText(r.ip); toast("IP kopyalandı: " + r.ip); } catch { toast("Kopyalanamadı"); }
         break;
       case "ssh":
         try { await api("/api/ping/ssh", { method: "POST", body: { ip: r.ip } }); } catch (err) { toast("SSH başlatılamadı: " + err.message); }

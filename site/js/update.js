@@ -1,7 +1,7 @@
 // Cihaz Güncelleme modülü: SSH ile toplu güncelleme, versiyon kontrolü, TTY mesajı ve tek cihaz ayarları.
 // WPF UpdateView / UpdateViewModel karşılığı. Adımların kendisi ajandadadır (UpdateCoordinator, WPF ile aynı kod).
 import { api, stream } from "./api.js";
-import { $, $$, esc, debounce, toast, ICONS } from "./util.js";
+import { $, $$, esc, debounce, toast, copyText, ICONS } from "./util.js";
 
 const DASH = "—";
 
@@ -82,7 +82,7 @@ export function createUpdate(ctx) {
     restartDhcpcd: false, restartWpa: false,
   });
   let cfg = {
-    parallel: 10, ttyText: "", wlan0Mask: "255.255.255.0", wlan0Gateway: "192.168.1.1", eth0Mask: "255.255.255.0", eth0Gateway: "192.168.1.1",
+    parallel: 10, sequentialIpFill: true, ttyText: "", wlan0Mask: "255.255.255.0", wlan0Gateway: "192.168.1.1", eth0Mask: "255.255.255.0", eth0Gateway: "192.168.1.1",
     singleTargetIp: "", singleServerIp: "", singleEth0Ip: "", singleEth0Mask: "", singleWlan0Ip: "", singleWlan0Mask: "",
   };
   const single = { doYatak: false, yatakId: 0, doServer: false, doEth0: false, doWlan0: false };
@@ -114,6 +114,7 @@ export function createUpdate(ctx) {
           <div class="card-h row" style="justify-content:space-between">CİHAZ LİSTESİ <span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="uSummary">Liste boş</span></div>
           <div class="card-b" style="padding-bottom:8px">
             <div class="row tight" style="justify-content:flex-end">
+              <label class="chk" style="margin-right:auto" title="wlan0 ya da eth0 hücresine IP girince alttaki satırlar sıradaki IP'lerle dolar (.0 ve .255 atlanır).&#10;Elle girilmiş değerlere dokunulmaz; sıra orada durur. Otomatik doldurulan değerler soluk gösterilir."><input type="checkbox" id="uSeqFill"> IP'leri sıralı doldur</label>
               <input type="text" id="uNewIp" class="mono-input" placeholder="IP adresi" style="width:150px" autocomplete="off">
               <button class="btn" id="uAdd">${ICONS.plus} Ekle</button>
               <button class="btn icon" id="uDelete" title="Seçili satırları sil (Delete)">${ICONS.trash}</button>
@@ -125,11 +126,11 @@ export function createUpdate(ctx) {
           </div>
           <div class="table-wrap" id="uTableWrap" tabindex="0" style="max-height:440px;min-height:220px;resize:vertical">
             <table class="fixed" style="min-width:820px">
-              <colgroup><col style="width:44px"><col style="width:135px"><col style="width:120px"><col style="width:84px"><col><col style="width:140px"><col style="width:125px"><col style="width:125px"></colgroup>
+              <colgroup><col style="width:44px"><col style="width:160px"><col style="width:120px"><col style="width:84px"><col><col style="width:140px"><col style="width:135px"><col style="width:135px"></colgroup>
               <thead><tr id="uHead"></tr></thead><tbody id="uBody"></tbody>
             </table>
           </div>
-          <div class="card-b sm muted" style="padding-top:8px">IP, YATAK ID, wlan0 ve eth0 hücrelerini düzenlemek için çift tıklayın. wlan0 / eth0 doluysa o cihazın dhcpcd.conf'u güncellenir.</div>
+          <div class="card-b sm muted" style="padding-top:8px">IP, YATAK ID, wlan0 ve eth0 hücrelerini düzenlemek için çift tıklayın. wlan0 / eth0 doluysa o cihazın dhcpcd.conf'u güncellenir. Soluk IP'ler sıralı doldurmayla yazıldı.</div>
         </section>
 
         <section class="card">
@@ -290,6 +291,7 @@ export function createUpdate(ctx) {
     try { cfg = { ...cfg, ...(await api("/api/update/settings")) }; } catch { return; }
     $$("[data-cfg]", root).forEach((i) => { i.value = cfg[i.dataset.cfg] ?? ""; });
     el.par.textContent = cfg.parallel;
+    q("uSeqFill").checked = cfg.sequentialIpFill !== false;
     try {
       fileInfo = await api("/api/update/info");
       el.folderPath.textContent = fileInfo.workFolder;
@@ -394,7 +396,7 @@ export function createUpdate(ctx) {
 
   const newRow = (ip, oda, yatakId, yatakAdi) => ({
     id: seq++, ip, ipSort: ipKey(ip), room: roomOf(oda), yatakAdi: (yatakAdi || "").trim(), yatakId: yatakId || "",
-    wlan0: "", eth0: "", checked: false, status: "", statusSev: "none", lastMessage: "", version: "", versionSev: "none", updating: false,
+    wlan0: "", eth0: "", wlan0Auto: false, eth0Auto: false, checked: false, status: "", statusSev: "none", lastMessage: "", version: "", versionSev: "none", updating: false,
   });
 
   function setDevices(devices) {
@@ -511,13 +513,13 @@ export function createUpdate(ctx) {
       if (room.collapsed) continue;
       html += `<tr class="item${selected.has(r.id) ? " sel" : ""}" data-id="${r.id}">
         <td><input type="checkbox" data-check ${r.checked ? "checked" : ""} ${isBusy() ? "disabled" : ""}></td>
-        <td class="mono edit" data-edit="ip">${esc(r.ip)}</td>
+        <td class="mono edit" data-edit="ip"><span class="ipcell">${esc(r.ip)}<button class="copy-ip" data-copy title="IP adresini kopyala">${ICONS.copy}</button></span></td>
         <td title="${esc(r.yatakAdi)}">${esc(r.yatakAdi) || DASH}</td>
         <td class="mono edit" data-edit="yatakId">${esc(r.yatakId) || `<span class="txt-muted">${DASH}</span>`}</td>
         <td>${badge(r.status, r.statusSev, r.lastMessage || r.status)}</td>
         <td>${badge(r.version, r.versionSev)}</td>
-        <td class="mono edit" data-edit="wlan0">${esc(r.wlan0)}</td>
-        <td class="mono edit" data-edit="eth0">${esc(r.eth0)}</td></tr>`;
+        <td class="mono edit${r.wlan0Auto ? " auto-ip" : ""}" data-edit="wlan0"${r.wlan0Auto ? ' title="Sıralı doldurmayla yazıldı"' : ""}>${esc(r.wlan0)}</td>
+        <td class="mono edit${r.eth0Auto ? " auto-ip" : ""}" data-edit="eth0"${r.eth0Auto ? ' title="Sıralı doldurmayla yazıldı"' : ""}>${esc(r.eth0)}</td></tr>`;
     }
     el.body.innerHTML = html;
     $$("input[data-mixed='1']", el.body).forEach((i) => { i.indeterminate = true; });
@@ -552,6 +554,8 @@ export function createUpdate(ctx) {
 
     const tr = e.target.closest("tr.item"); if (!tr) return;
     const id = +tr.dataset.id;
+    const copyBtn = e.target.closest("[data-copy]");
+    if (copyBtn) { copyIp(rows.find((r) => r.id === id).ip, copyBtn); return; }
     if (e.target.matches("input[data-check]")) {
       rows.find((r) => r.id === id).checked = e.target.checked;
       render();
@@ -573,6 +577,7 @@ export function createUpdate(ctx) {
 
   // Hücre düzenleme (çift tıklama): geçersiz değer reddedilir ve eski değer döner
   el.body.addEventListener("dblclick", (e) => {
+    if (e.target.closest("[data-copy]")) return;          // kopyala düğmesine hızlı iki tıklama
     const td = e.target.closest("td[data-edit]"); if (!td || isBusy()) return;
     const r = rows.find((x) => x.id === +td.closest("tr").dataset.id);
     const field = td.dataset.edit;
@@ -589,13 +594,62 @@ export function createUpdate(ctx) {
         if (field === "ip") ok = isIpv4(v) && !rows.some((x) => x !== r && x.ip === v);
         else if (field === "yatakId") ok = v === "" || /^\d+$/.test(v);
         else ok = v === "" || isIpv4(v);
-        if (ok) { r[field] = v; if (field === "ip") r.ipSort = ipKey(v); } else toast("Geçersiz değer");
+        if (ok) {
+          const changed = r[field] !== v;
+          r[field] = v;
+          if (field === "ip") r.ipSort = ipKey(v);
+          if (field === "wlan0" || field === "eth0") {
+            r[field + "Auto"] = false;                      // elle girildi
+            if (changed && cfg.sequentialIpFill !== false) fillIpsDown(r, field);
+          }
+        } else toast("Geçersiz değer");
       }
       render();
     };
     input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") finish(true); else if (ev.key === "Escape") finish(false); });
     input.addEventListener("blur", () => finish(true));
   });
+
+  // ── wlan0 / eth0 sıralı doldurma ────────────────────────────
+  q("uSeqFill").addEventListener("change", (e) => { cfg.sequentialIpFill = e.target.checked; saveSettings(); });
+
+  const ipToInt = (ip) => ip.split(".").reduce((a, x) => a * 256 + Number(x), 0);
+  const intToIp = (n) => [Math.floor(n / 16777216) % 256, Math.floor(n / 65536) % 256, Math.floor(n / 256) % 256, n % 256].join(".");
+  /** Sıradaki adres; son baytı 0 veya 255 olanlar (ağ / yayın) atlanır. Adres alanı biterse null. */
+  const nextHostIp = (n) => {
+    do { if (n >= 0xFFFFFFFF) return null; n++; } while (n % 256 === 0 || n % 256 === 255);
+    return n;
+  };
+
+  /**
+   * Tablo sırasıyla (oda grupları ve sıralama dahil) satırın altındakileri doldurur. Boş ya da daha önce
+   * otomatik doldurulmuş hücreler yazılır; elle girilmiş ilk değerde durulur. Kaynak silindiyse otomatikler de silinir.
+   * (WPF UpdateViewModel.FillIpsDown ile aynı davranış.)
+   */
+  function fillIpsDown(from, field) {
+    const auto = field + "Auto";
+    const start = from[field];
+    let next = isIpv4(start) ? nextHostIp(ipToInt(start)) : null;
+    const order = visibleRows();
+    let filled = 0;
+    for (const r of order.slice(order.indexOf(from) + 1)) {
+      if (r[field] && !r[auto]) break;
+      const value = next != null ? intToIp(next) : "";
+      r[field] = value; r[auto] = value !== "";
+      if (value) filled++;
+      if (next != null) next = nextHostIp(next);
+    }
+    if (filled) log(`${field}: alttaki ${filled} satır ${start} sonrasından sırayla dolduruldu.`);
+  }
+
+  async function copyIp(ip, btn) {
+    try {
+      await copyText(ip);
+      btn.classList.add("done"); btn.innerHTML = ICONS.check;
+      setTimeout(() => { btn.classList.remove("done"); btn.innerHTML = ICONS.copy; }, 1200);
+      toast("IP kopyalandı: " + ip);
+    } catch { toast("Kopyalanamadı"); }
+  }
 
   // ── İşlem çalıştırma ────────────────────────────────────────
   function updateUi() {
