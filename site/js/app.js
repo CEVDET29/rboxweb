@@ -8,6 +8,7 @@ import { createUpdate } from "./update.js";
 import { createControl } from "./control.js";
 import { createFiles } from "./files.js";
 import { createPort } from "./port.js";
+import { createTcp } from "./tcp.js";
 import { SITE } from "./version.js";
 
 const MODULES = [
@@ -17,6 +18,7 @@ const MODULES = [
   { id: "ybdb", title: "YBDB Odalar", icon: ICONS.ybdb, sub: "Oda, yatak ve doluluk durumu" },
   { id: "files", title: "Dosyalar", icon: ICONS.files, sub: "Güncelleme dosyalarını bu hastane için düzenle" },
   { id: "port", title: "Port Kontrol", icon: ICONS.port, sub: "Portu dinleyen uygulama, uygulamanın portları ve uzak bilgisayarda port durumu" },
+  { id: "tcp", title: "TCP Dinleyici", icon: ICONS.tcp, sub: "Bir portu dinle; bağlanan cihazları ve gönderdikleri veriyi canlı gör" },
 ];
 
 const screens = { gate: $("#gate"), connect: $("#connect"), app: $("#app") };
@@ -181,6 +183,7 @@ function enterApp() {
   views.control = createControl(ctx);
   views.files = createFiles(ctx);
   views.port = createPort();
+  views.tcp = createTcp();
   renderListButton();
   loadSsh();
 

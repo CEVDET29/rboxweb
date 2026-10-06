@@ -7,6 +7,7 @@ using RboxAgent.Modules.Ping;
 using RboxAgent.Modules.Control;
 using RboxAgent.Modules.Files;
 using RboxAgent.Modules.Port;
+using RboxAgent.Modules.Tcp;
 using RboxAgent.Modules.Update;
 using RboxAgent.Modules.Ybdb;
 
@@ -609,6 +610,35 @@ namespace RboxAgent
                     await Reply(res, LivePingService.Poll(b.Cursors));
                     return;
                 }
+
+                // ── TCP Dinleyici (gelen veriyi gösterir, karşıya bir şey göndermez) ──
+                case ("GET", "/api/tcp/addresses"):
+                    await Reply(res, TcpListenService.Addresses());
+                    return;
+
+                case ("POST", "/api/tcp/start"):
+                {
+                    var b = await Body<TcpStartIn>(req);
+                    var (ok, error, id) = TcpListenService.Start(b.Port, b.Bind);
+                    await Reply(res, ok ? new { ok, id } : new { ok, error }, ok ? 200 : 422);
+                    return;
+                }
+
+                case ("POST", "/api/tcp/stop"):
+                case ("POST", "/api/tcp/remove"):
+                {
+                    var b = await Body<LiveIdIn>(req);
+                    bool ok = path == "/api/tcp/stop" ? TcpListenService.Stop(b.Id) : TcpListenService.Remove(b.Id);
+                    await Reply(res, new { ok });
+                    return;
+                }
+
+                case ("POST", "/api/tcp/poll"):
+                {
+                    var b = await Body<TcpPollIn>(req);
+                    await Reply(res, TcpListenService.Poll(b.Id, b.After));
+                    return;
+                }
             }
 
             await Reply(res, new { error = "Bulunamadı" }, 404);
@@ -617,6 +647,8 @@ namespace RboxAgent
         private sealed class IpIn { public string? Ip { get; set; } }
         private sealed class PortQueryIn { public string? Query { get; set; } public string? Host { get; set; } }
         private sealed class LiveIdIn { public int Id { get; set; } }
+        private sealed class TcpStartIn { public int Port { get; set; } public string? Bind { get; set; } }
+        private sealed class TcpPollIn { public int Id { get; set; } public long After { get; set; } }
         private sealed class CihazSaveIn { public CihazKaydi? Original { get; set; } public CihazKaydi? Changed { get; set; } }
         private sealed class CihazBulkIn { public List<CihazKaydi>? Rows { get; set; } }
         private sealed class LivePollIn { public Dictionary<string, long>? Cursors { get; set; } }

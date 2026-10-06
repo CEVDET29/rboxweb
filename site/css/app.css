@@ -437,6 +437,23 @@ tr.item.off td { opacity: .6; }
 .lp-add input { flex: 1; height: 28px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; }
 .txt-ok { color: var(--ok-text); }
 
+/* ── TCP Dinleyici ────────────────────────────────────────────── */
+.tcp-state { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-muted); }
+.tcp-state i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.tcp-state.on { color: var(--ok-text); } .tcp-state.on i { background: var(--ok); }
+.tcp-con { height: calc(100vh - 470px); min-height: 320px; overflow: auto; padding: 10px 14px; border-radius: 8px;
+  background: #0C0C0C; color: #CCCCCC; font: 12.5px/1.5 Consolas, "Cascadia Mono", monospace; }
+.tcp-con .tl { margin-bottom: 3px; white-space: pre-wrap; word-break: break-all; }
+.tcp-con .t { color: #5F6B7A; margin-right: 14px; user-select: none; }
+.tcp-con .r { color: #79C0FF; margin-right: 14px; }
+.tcp-con .h { color: #E6EDF3; }
+.tcp-con .data .h { color: #5F6B7A; }
+.tcp-con .connect .h { color: #7EE787; }
+.tcp-con .disconnect .h { color: #D29922; }
+.tcp-con .error .h { color: #FF7B72; }
+.tcp-con .b { color: #CCCCCC; margin-top: 2px; }
+.tcp-empty { color: #5F6B7A; padding: 8px 10px; font-family: "Segoe UI", system-ui, sans-serif; }
+
 /* ── Ek temalar (WPF: Themes/Ocean.xaml, Emerald.xaml, Graphite.xaml ile aynı renkler) ── */
 :root[data-theme="ocean"] {
   --header: linear-gradient(135deg, #0B4F5C 0%, #0E6B78 55%, #148A94 100%);
