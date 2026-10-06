@@ -50,6 +50,8 @@ namespace RboxAgent.Modules.Update.Core
         public bool Crontab { get; set; }
         public bool JsonSettings { get; set; }
         public bool Cleanup { get; set; }
+        /// <summary>/var/www/consoleApps/publish altındaki hatalı "\Logs", "Logs" klasörleri ve "\Logs\ServiceLog_*.txt" dosyaları.</summary>
+        public bool BadLogsCleanup { get; set; }
         public bool ExpandFs { get; set; }
         public bool RebootAfter { get; set; }
         public bool BashRc { get; set; }
@@ -336,6 +338,55 @@ namespace RboxAgent.Modules.Update.Core
             var (ok, msg) = await x.Updater.ExecuteSudoChainAsync(x.Client, cmds, x.Ip, x.Ct);
             await x.Logger.LogAsync(x.Ip, ok ? "Gereksiz dosyalar temizlendi." : $"Temizlik hatası: {msg}");
             return ok;
+        }
+    }
+
+    /// <summary>
+    /// "Hatalı Log'ları temizle": eski SerialWorker sürümleri Windows yolu ("\Logs\...") kullandığı için
+    /// /var/www/consoleApps/publish altında adı ters bölülü klasör ve dosyalar oluşuyordu. Silinenler:
+    /// "\Logs" ve "Logs" klasörleri (içleriyle) ve adı "\Logs\ServiceLog_*.txt" olan dosyalar.
+    /// Doğru log klasörü "Log" ve diğer dosyalara dokunulmaz.
+    /// </summary>
+    internal sealed class BadLogsCleanupStep : IUpdateStep
+    {
+        private const string Dir = "/var/www/consoleApps/publish";
+
+        public bool ShouldRun(UpdateOptions o) => o.BadLogsCleanup;
+
+        public async Task<bool> RunAsync(StepContext x)
+        {
+            // find -name kalıbında ters bölü kaçış karakteridir: '\\' = tek ters bölü (dosya adındaki "\")
+            string script =
+                $"cd {Dir} 2>/dev/null || {{ echo 'YOK'; exit 0; }}; " +
+                @"n=$(find . -maxdepth 1 -type f -name '\\Logs\\ServiceLog_*.txt' | wc -l); " +
+                @"find . -maxdepth 1 -type f -name '\\Logs\\ServiceLog_*.txt' -delete; " +
+                @"d=''; for x in '\Logs' 'Logs'; do if [ -d ""./$x"" ] && [ ! -L ""./$x"" ]; then rm -rf -- ""./$x"" && d=""$d $x""; fi; done; " +
+                @"echo ""$n|$d""";
+
+            var (ok, stdout, stderr) = await x.Updater.ExecuteSudoGetOutputAsync(x.Client, script, x.Ip, x.Ct, 60);
+            string res = (stdout ?? "").Trim().Split('\n').LastOrDefault()?.Trim() ?? "";
+            if (!ok)
+            {
+                await x.Logger.LogAsync(x.Ip, $"Hatalı Log'lar temizlenemedi: {(string.IsNullOrWhiteSpace(stderr) ? res : stderr.Trim())}", StatusKind.Warn);
+                return true;   // bilgi amaçlı temizlik; diğer adımları durdurmaz
+            }
+            if (res == "YOK")
+            {
+                await x.Logger.LogAsync(x.Ip, $"Hatalı Log temizliği: {Dir} klasörü yok, atlandı.", StatusKind.Warn);
+                return true;
+            }
+
+            var parts = res.Split('|');
+            int files = int.TryParse(parts[0].Trim(), out int n) ? n : 0;
+            string dirs = parts.Length > 1 ? parts[1].Trim() : "";
+            if (files == 0 && dirs.Length == 0)
+                await x.Logger.LogAsync(x.Ip, "Hatalı Log temizliği: silinecek \\Logs / Logs klasörü ya da \\Logs\\ServiceLog_*.txt dosyası yok.");
+            else
+                await x.Logger.LogAsync(x.Ip,
+                    $"Hatalı Log'lar temizlendi: {files} \\Logs\\ServiceLog_*.txt dosyası" +
+                    (dirs.Length > 0 ? $", klasör: {string.Join(", ", dirs.Split(' ', StringSplitOptions.RemoveEmptyEntries))}" : "") +
+                    " silindi.", StatusKind.Success);
+            return true;
         }
     }
 
@@ -1697,6 +1748,7 @@ namespace RboxAgent.Modules.Update.Core
         private static readonly IUpdateStep[] Steps =
         {
             new CleanupStep(),
+            new BadLogsCleanupStep(),
             new NanoRcStep(),
             new RcLocalStep(),
             new BashRcStep(),

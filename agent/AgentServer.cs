@@ -309,6 +309,8 @@ namespace RboxAgent
                     u.Wlan0Mask = b.Wlan0Mask ?? u.Wlan0Mask; u.Wlan0Gateway = b.Wlan0Gateway ?? u.Wlan0Gateway;
                     u.Eth0Mask = b.Eth0Mask ?? u.Eth0Mask; u.Eth0Gateway = b.Eth0Gateway ?? u.Eth0Gateway;
                     u.SequentialIpFill = b.SequentialIpFill;
+                    u.SendRemoteDir = string.IsNullOrWhiteSpace(b.SendRemoteDir) ? u.SendRemoteDir : b.SendRemoteDir.Trim();
+                    u.SendChmodSh = b.SendChmodSh; u.SendFixLineEndings = b.SendFixLineEndings;
                     u.SingleTargetIp = b.SingleTargetIp ?? u.SingleTargetIp; u.SingleServerIp = b.SingleServerIp ?? u.SingleServerIp;
                     u.SingleEth0Ip = b.SingleEth0Ip ?? u.SingleEth0Ip; u.SingleEth0Mask = b.SingleEth0Mask ?? u.SingleEth0Mask;
                     u.SingleWlan0Ip = b.SingleWlan0Ip ?? u.SingleWlan0Ip; u.SingleWlan0Mask = b.SingleWlan0Mask ?? u.SingleWlan0Mask;
@@ -341,6 +343,42 @@ namespace RboxAgent
                         if (isRun) await UpdateService.RunUpdateAsync(runId, runReq!, sink);
                         else await UpdateService.RunVersionAsync(runId, verReq!, sink);
                     }
+                    finally
+                    {
+                        UpdateService.End();
+                        await sink.CompleteAsync();
+                        try { res.Close(); } catch { }
+                    }
+                    return;
+                }
+
+                // ── Dosya gönder: önce dosyalar tek tek ajana yüklenir, sonra işaretli cihazlara kopyalanır ──
+                case ("POST", "/api/update/send/stage"):
+                {
+                    var (ok, error) = await SendService.StageFileAsync(req.QueryString["id"],
+                        Uri.UnescapeDataString(req.Headers["X-File-Name"] ?? ""), req.InputStream);
+                    await Reply(res, ok ? new { ok = true, error = "" } : new { ok = false, error = error ?? "" }, ok ? 200 : 422);
+                    return;
+                }
+
+                case ("POST", "/api/update/send/discard"):
+                    SendService.Discard(req.QueryString["id"]);
+                    await Reply(res, new { ok = true });
+                    return;
+
+                case ("POST", "/api/update/send/run"):
+                {
+                    SendRunRequest b;
+                    try { b = await Body<SendRunRequest>(req); }
+                    catch { await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+                    if (SendService.Validate(b) is { } err) { await Reply(res, new { error = err }, 422); return; }
+                    if (!UpdateService.TryBegin()) { await Reply(res, new { error = "Başka bir güncelleme / versiyon kontrolü sürüyor." }, 409); return; }
+
+                    res.StatusCode = 200;
+                    res.ContentType = "application/x-ndjson; charset=utf-8";
+                    res.SendChunked = true;
+                    var sink = new NdjsonSink(res.OutputStream, Json);
+                    try { await SendService.RunAsync(Guid.NewGuid().ToString("N"), b, sink); }
                     finally
                     {
                         UpdateService.End();

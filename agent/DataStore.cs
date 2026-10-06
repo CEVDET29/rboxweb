@@ -101,6 +101,11 @@ namespace RboxAgent
         /// <summary>Tabloda wlan0 / eth0 girilince alttaki satırları sıradaki IP'lerle doldur.</summary>
         public bool SequentialIpFill { get; set; } = true;
 
+        // Dosya gönder
+        public string SendRemoteDir { get; set; } = "/home/pi";
+        public bool SendChmodSh { get; set; } = true;
+        public bool SendFixLineEndings { get; set; } = true;
+
         // Tek cihaz sekmesi
         public string SingleTargetIp { get; set; } = "172.16.154.254";
         public string SingleServerIp { get; set; } = "172.16.154.1";

@@ -14,6 +14,8 @@ const SISTEM = [
   { k: "serialDevices", label: "serialdevices.json", file: "serialdevices.json",
     tip: "updateFiles\\serialdevices.json dosyasını cihaza kopyalar.\nHedef: /var/www/consoleApps/publish/serialdevices.json (root:root, 0644).\nDosya updateFiles'ta yoksa adım atlanır, diğer adımlar etkilenmez.\nNot: serialworker.service yeniden başlatılmaz — gerekiyorsa \".dll güncelle\"yi de seçin." },
   { k: "cleanup", label: "Dosya temizliği" },
+  { k: "badLogsCleanup", label: "Hatalı Log'ları temizle",
+    tip: "/var/www/consoleApps/publish/ içinde şunları siler:\n• \"\\Logs\" ve \"Logs\" klasörleri (içleriyle birlikte)\n• adı \"\\Logs\\ServiceLog_*.txt\" olan dosyalar\nDoğru log klasörü \"Log\" ve diğer dosyalara dokunulmaz." },
   { k: "expandFs", label: "Hafızayı genişlet (rootfs)" },
   { k: "rebootAfter", label: "Yeniden başlat" },
   { k: "webServer", label: "Web server",
@@ -50,6 +52,9 @@ const COLUMNS = [
   { key: "eth0", label: "eth0", val: (r) => r.eth0 },
 ];
 
+// Dosya gönder: sık kullanılan hedef klasörler (WPF FileSender.PresetDirs ile aynı)
+const SEND_DIRS = ["/home/pi", "/home/pi/Desktop", "/var/www/consoleApps/publish", "/usr/local/bin", "/etc/systemd/system", "/tmp"];
+
 const isIpv4 = (s) => {
   if (!s) return false;
   const p = s.trim().split(".");
@@ -74,6 +79,8 @@ export function createUpdate(ctx) {
   let runId = null, abortCtl = null;
   let done = 0, total = 1;
   let singleBusy = false;
+  let sendGroups = [];                     // Dosya gönder: [{key, label, title, files:[{file, rel}]}]
+  let sendUploading = false, sendAbort = false;
   let fileInfo = { workFolder: "", editable: [], files: [] };
   const opt = Object.fromEntries(ALL_KEYS.map((k) => [k, false]));
   Object.assign(opt, {
@@ -82,7 +89,7 @@ export function createUpdate(ctx) {
     restartDhcpcd: false, restartWpa: false,
   });
   let cfg = {
-    parallel: 10, sequentialIpFill: true, ttyText: "", wlan0Mask: "255.255.255.0", wlan0Gateway: "192.168.1.1", eth0Mask: "255.255.255.0", eth0Gateway: "192.168.1.1",
+    parallel: 10, sequentialIpFill: true, sendRemoteDir: "/home/pi", sendChmodSh: true, sendFixLineEndings: true, ttyText: "", wlan0Mask: "255.255.255.0", wlan0Gateway: "192.168.1.1", eth0Mask: "255.255.255.0", eth0Gateway: "192.168.1.1",
     singleTargetIp: "", singleServerIp: "", singleEth0Ip: "", singleEth0Mask: "", singleWlan0Ip: "", singleWlan0Mask: "",
   };
   const single = { doYatak: false, yatakId: 0, doServer: false, doEth0: false, doWlan0: false };
@@ -197,6 +204,30 @@ export function createUpdate(ctx) {
               <div class="stack" style="gap:6px;align-content:start"><button class="btn primary" id="uTtySend" style="min-width:84px;justify-content:center">Gönder</button><button class="btn" id="uTtyClear" style="justify-content:center">Temizle</button></div>
             </div>
           </section>
+
+          <!-- Dosya gönder: bu bilgisayardan seçilen dosya / klasörler işaretli cihazlarda bir klasöre -->
+          <section class="card" id="uSend">
+            <div class="card-h row" style="justify-content:space-between">DOSYA GÖNDER <span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="uSendSummary">Dosya seçilmedi</span></div>
+            <div class="card-b stack" style="gap:10px">
+              <div class="row tight">
+                <button class="btn" id="uSendFiles">${ICONS.upload} Dosya seç</button>
+                <button class="btn" id="uSendFolder">${ICONS.folder} Klasör seç</button>
+                <button class="link" id="uSendClear">Temizle</button>
+                <input type="file" id="uSendFileIn" multiple hidden>
+                <input type="file" id="uSendDirIn" webkitdirectory multiple hidden>
+              </div>
+              <div class="send-list" id="uSendList"></div>
+              <div><div class="sm muted" style="margin-bottom:4px">Cihazdaki hedef klasör</div>
+                <input type="text" class="mono-input" id="uSendDir" list="uSendDirs" data-cfg="sendRemoteDir" style="width:100%" autocomplete="off"
+                  title="Yoksa oluşturulur. Aynı adlı dosyaların üzerine yazılır; sistem klasörlerine sudo ile yazılır.">
+                <datalist id="uSendDirs">${SEND_DIRS.map((d) => `<option value="${d}">`).join("")}</datalist></div>
+              <div class="row" style="gap:6px 16px">
+                <label class="chk" title="Kopyalanan .sh dosyalarına chmod +x uygulanır."><input type="checkbox" id="uSendChmod"> .sh dosyalarını çalıştırılabilir yap</label>
+                <label class="chk" title="Metin dosyalarında (.sh .service .conf .txt .json .py ... ve #! ile başlayanlar) CRLF → LF, UTF-8 BOM silinir.&#10;Aksi halde Windows'ta kaydedilmiş script Linux'ta çalışmaz."><input type="checkbox" id="uSendCrlf"> Windows satır sonlarını düzelt</label>
+              </div>
+              <button class="btn primary" id="uSendRun" style="justify-content:center">${ICONS.upload} <span>İşaretli cihazlara gönder</span></button>
+            </div>
+          </section>
         </div>
 
         <section class="card">
@@ -292,6 +323,8 @@ export function createUpdate(ctx) {
     $$("[data-cfg]", root).forEach((i) => { i.value = cfg[i.dataset.cfg] ?? ""; });
     el.par.textContent = cfg.parallel;
     q("uSeqFill").checked = cfg.sequentialIpFill !== false;
+    q("uSendChmod").checked = cfg.sendChmodSh !== false;
+    q("uSendCrlf").checked = cfg.sendFixLineEndings !== false;
     try {
       fileInfo = await api("/api/update/info");
       el.folderPath.textContent = fileInfo.workFolder;
@@ -658,7 +691,12 @@ export function createUpdate(ctx) {
     el.bar.style.width = total ? `${Math.round((done / total) * 100)}%` : "0";
     el.prog.textContent = `${done} / ${total}`;
 
-    el.version.disabled = running === "update";
+    el.version.disabled = running === "update" || running === "send";
+    const send = q("uSendRun");
+    send.querySelector("span").textContent = running === "send" ? (sendUploading ? "Yükleme iptal" : "İptal") : "İşaretli cihazlara gönder";
+    send.classList.toggle("danger", running === "send"); send.classList.toggle("primary", running !== "send");
+    send.disabled = busy && running !== "send";
+    ["uSendFiles", "uSendFolder", "uSendClear", "uSendDir", "uSendChmod", "uSendCrlf"].forEach((k) => { q(k).disabled = busy; });
     el.version.querySelector("span").textContent = running === "version" ? "İptal" : "Versiyon kontrol";
     if (running === "update") {
       el.start.innerHTML = `${ICONS.stop} <span>İptal</span>`; el.start.classList.remove("primary"); el.start.classList.add("danger"); el.start.disabled = false;
@@ -692,7 +730,7 @@ export function createUpdate(ctx) {
       case "targetResult": { const r = rowById(m.id); if (r) { r.updating = false; r.status = m.ok ? "Başarılı" : "Hata"; r.statusSev = m.ok ? "ok" : "error"; } break; }
       case "targetCancelled": { const r = rowById(m.id); if (r) { r.updating = false; r.status = "İptal edildi"; r.statusSev = "warn"; } break; }
       case "version": { const r = rowById(m.id); if (r) { r.version = m.text; r.versionSev = m.sev; } break; }
-      case "progress": done = m.done; total = m.total; break;
+      case "progress": done = Math.max(done, m.done); total = m.total; break;   // paralel işlerde sıra karışabilir
     }
     scheduleRender();
   }
@@ -764,6 +802,124 @@ export function createUpdate(ctx) {
 
   el.start.addEventListener("click", () => (running === "update" ? cancel() : startUpdate()));
   el.version.addEventListener("click", startVersion);
+
+  // ── Dosya gönder ────────────────────────────────────────────
+  // Seçilenler ajana tek tek yüklenir (geçici klasör), sonra ajan işaretli cihazlara kopyalar (WPF FileSender ile aynı).
+
+  const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b >= 1024 ? `${Math.round(b / 1024)} KB` : `${b} B`);
+  const sendFiles = () => {
+    const m = new Map();                   // aynı hedef yola düşen dosyadan sonuncusu kalır
+    sendGroups.forEach((g) => g.files.forEach((f) => m.set(f.rel, f)));
+    return [...m.values()];
+  };
+
+  function renderSend() {
+    const files = sendFiles();
+    q("uSendSummary").textContent = files.length ? `${files.length} dosya, ${fmtSize(files.reduce((a, f) => a + f.file.size, 0))}` : "Dosya seçilmedi";
+    q("uSendList").innerHTML = sendGroups.length
+      ? sendGroups.map((g, i) => `<div class="send-item" title="${esc(g.title)}"><span>${esc(g.label)}</span>
+          <button class="copy-ip" data-sendrm="${i}" title="Listeden çıkar" ${isBusy() ? "disabled" : ""}>✕</button></div>`).join("")
+      : `<div class="send-empty">Dosya / klasör seçin ya da buraya sürükleyin</div>`;
+  }
+
+  function addSendGroups(files) {
+    // files: [{file, rel}] — rel "klasor/alt/dosya" ya da "dosya"; üst klasöre göre gruplanır
+    const byTop = new Map();
+    for (const f of files) {
+      const top = f.rel.includes("/") ? f.rel.split("/")[0] + "/" : f.rel;
+      if (!byTop.has(top)) byTop.set(top, []);
+      byTop.get(top).push(f);
+    }
+    for (const [top, fs] of byTop) {
+      const i = sendGroups.findIndex((g) => g.key === top);
+      const size = fmtSize(fs.reduce((a, f) => a + f.file.size, 0));
+      const g = { key: top, files: fs, label: top.endsWith("/") ? `${top} (${fs.length} dosya, ${size})` : `${top} (${size})`, title: fs.map((f) => f.rel).join("\n") };
+      if (i >= 0) sendGroups[i] = g; else sendGroups.push(g);
+    }
+    renderSend();
+  }
+
+  q("uSendFiles").addEventListener("click", () => q("uSendFileIn").click());
+  q("uSendFolder").addEventListener("click", () => q("uSendDirIn").click());
+  q("uSendFileIn").addEventListener("change", (e) => { addSendGroups([...e.target.files].map((file) => ({ file, rel: file.name }))); e.target.value = ""; });
+  q("uSendDirIn").addEventListener("change", (e) => { addSendGroups([...e.target.files].map((file) => ({ file, rel: file.webkitRelativePath || file.name }))); e.target.value = ""; });
+  q("uSendClear").addEventListener("click", () => { if (!isBusy()) { sendGroups = []; renderSend(); } });
+  q("uSendList").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-sendrm]"); if (!b || isBusy()) return;
+    sendGroups.splice(+b.dataset.sendrm, 1); renderSend();
+  });
+  q("uSendChmod").addEventListener("change", (e) => { cfg.sendChmodSh = e.target.checked; saveSettings(); });
+  q("uSendCrlf").addEventListener("change", (e) => { cfg.sendFixLineEndings = e.target.checked; saveSettings(); });
+
+  // Sürükle-bırak: klasörler alt klasörleriyle okunur (sayfanın Excel bırakma alanına gitmez)
+  const card = q("uSend");
+  card.addEventListener("dragover", (e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); e.stopPropagation(); card.classList.add("drop"); } });
+  card.addEventListener("dragleave", (e) => { if (!card.contains(e.relatedTarget)) card.classList.remove("drop"); });
+  card.addEventListener("drop", async (e) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault(); e.stopPropagation(); card.classList.remove("drop");
+    if (isBusy()) return;
+    const entries = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+    const out = [];
+    const readAll = (reader) => new Promise((res, rej) => {
+      const acc = [];
+      const next = () => reader.readEntries((batch) => { if (!batch.length) res(acc); else { acc.push(...batch); next(); } }, rej);
+      next();
+    });
+    async function walk(entry, prefix) {
+      if (entry.isFile) out.push({ file: await new Promise((res, rej) => entry.file(res, rej)), rel: prefix + entry.name });
+      else if (entry.isDirectory) for (const c of await readAll(entry.createReader())) await walk(c, prefix + entry.name + "/");
+    }
+    try { for (const en of entries) await walk(en, ""); }
+    catch (err) { toast("Dosyalar okunamadı: " + err.message); }
+    if (out.length) addSendGroups(out);
+  });
+
+  async function startSend() {
+    if (running === "send") { if (sendUploading) sendAbort = true; else cancel(); return; }
+    if (isBusy()) return;
+    const files = sendFiles();
+    if (!files.length) return log("Gönderilecek dosya seçin.", "error");
+    const targets = rows.filter((r) => r.checked);
+    if (!targets.length) return log("Dosya göndermek için cihaz işaretleyin.", "warn");
+    const dir = q("uSendDir").value.trim();
+    if (!dir.startsWith("/") || dir === "/") return log("Cihazdaki hedef klasörü / ile başlayan bir yol olarak yazın (ör. /home/pi).", "error");
+    const what = q("uSendSummary").textContent;
+    if (!confirm(`${what}, işaretli ${targets.length} cihazda\n${dir}\nklasörüne kopyalanacak. Aynı adlı dosyaların üzerine yazılır.\n\nDevam edilsin mi?`)) return;
+    if (ctx.requireSsh && !(await ctx.requireSsh())) return;
+
+    // 1) Dosyaları ajana yükle
+    const stageId = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    running = "send"; sendUploading = true; sendAbort = false; done = 0; total = files.length;
+    updateUi(); renderSend();
+    log(`Dosyalar ajana yükleniyor (${what})...`);
+    let uploaded = false;
+    try {
+      for (const f of files) {
+        if (sendAbort) throw new Error("İptal edildi.");
+        await api(`/api/update/send/stage?id=${stageId}`, { method: "POST", body: f.file, headers: { "X-File-Name": encodeURIComponent(f.rel) } });
+        done++; updateUi();
+      }
+      uploaded = true;
+    } catch (e) {
+      log("Dosyalar ajana yüklenemedi: " + e.message, sendAbort ? "warn" : "error");
+      api(`/api/update/send/discard?id=${stageId}`, { method: "POST" }).catch(() => {});
+    } finally {
+      sendUploading = false; running = null;
+      updateUi();
+    }
+    if (!uploaded) { renderSend(); return; }
+
+    // 2) Cihazlara gönder (toplu güncellemeyle aynı akış ve tablo durumları)
+    targets.forEach((t) => { t.status = "Sırada"; t.statusSev = "muted"; });
+    await run("send", "/api/update/send/run", {
+      stageId, targets: targets.map(toTarget), remoteDir: dir,
+      chmodSh: q("uSendChmod").checked, fixLineEndings: q("uSendCrlf").checked, parallel: cfg.parallel,
+    });
+    renderSend();
+  }
+  q("uSendRun").addEventListener("click", startSend);
+  renderSend();
 
   // ── TTY mesajı ──────────────────────────────────────────────
   q("uTtyClear").addEventListener("click", () => { el.tty.value = ""; cfg.ttyText = ""; saveSettings(); });

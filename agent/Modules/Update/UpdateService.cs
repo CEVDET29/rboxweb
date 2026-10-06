@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
@@ -107,6 +107,18 @@ namespace RboxAgent.Modules.Update
         }
 
         public static bool IsBusy => Volatile.Read(ref _busy) == 1;
+        /// <summary>Başka modülün (Dosya gönder) akışını iptal edilebilir kayda ekler; Dispose kaydı siler.</summary>
+        internal static IDisposable RegisterRun(string runId, CancellationTokenSource cts)
+        {
+            Runs[runId] = cts;
+            return new RunRegistration(runId);
+        }
+
+        private sealed class RunRegistration(string runId) : IDisposable
+        {
+            public void Dispose() => Runs.TryRemove(runId, out _);
+        }
+
         private static bool TryEnter() => Interlocked.CompareExchange(ref _busy, 1, 0) == 0;
         private static void Leave() => Volatile.Write(ref _busy, 0);
 
@@ -125,7 +137,7 @@ namespace RboxAgent.Modules.Update
             s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("$", "\\$").Replace("`", "\\`");
 
         /// <summary>Ekrana / günlüğe giden metinde SSH parolası varsa "****" yapar (kabuk için kaçışlanmış biçimler dahil).</summary>
-        private static Func<string?, string> MakeRedact(string pass) => s =>
+        internal static Func<string?, string> MakeRedact(string pass) => s =>
         {
             if (string.IsNullOrEmpty(s) || string.IsNullOrEmpty(pass)) return s ?? "";
             return s.Replace(EscapeForDoubleQuotes(pass), "****")
@@ -133,7 +145,7 @@ namespace RboxAgent.Modules.Update
                     .Replace(pass, "****");
         };
 
-        private sealed class Reporter : IStatusReporter
+        internal sealed class Reporter : IStatusReporter
         {
             private readonly NdjsonSink _sink;
             private readonly Func<string?, string> _redact;

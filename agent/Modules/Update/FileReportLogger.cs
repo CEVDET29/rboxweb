@@ -89,22 +89,25 @@ namespace RboxAgent.Modules.Update
             }
         }
 
-        /// <summary>Toplu güncellemenin başı: tarih, cihaz sayısı ve işaretlerin açıklaması.</summary>
-        public Task BeginRunAsync(int deviceCount, int parallel) =>
-            AppendAsync(string.Join(Environment.NewLine,
+        /// <summary>Toplu işin başı (güncelleme / dosya gönderme): tarih, cihaz sayısı ve işaretlerin açıklaması.</summary>
+        public Task BeginRunAsync(int deviceCount, int parallel, string title = "GÜNCELLEME", string? detail = null) =>
+            AppendAsync(string.Join(Environment.NewLine, new[]
+            {
                 "",
                 Rule,
-                $"  GÜNCELLEME  ·  {DateTime.Now:dd.MM.yyyy HH:mm:ss}  ·  {deviceCount} cihaz, {parallel} paralel",
+                $"  {title}  ·  {DateTime.Now:dd.MM.yyyy HH:mm:ss}  ·  {deviceCount} cihaz, {parallel} paralel",
+                detail == null ? null : $"  {detail}",
                 $"  {Legend}",
-                Rule));
+                Rule,
+            }.Where(l => l != null)));
 
         /// <summary>Bir cihazın sonucu (cihazın kayıtlarının hemen altına, ayırıcı çizgiyle).</summary>
-        public Task DeviceResultAsync(string ip, bool? ok)
+        public Task DeviceResultAsync(string ip, bool? ok, string what = "GÜNCELLEME")
         {
             string text = ok switch
             {
-                true => $"✔ {ip}  →  GÜNCELLEME BAŞARILI",
-                false => $"✖ {ip}  →  GÜNCELLEME BAŞARISIZ",
+                true => $"✔ {ip}  →  {what} BAŞARILI",
+                false => $"✖ {ip}  →  {what} BAŞARISIZ",
                 null => $"⚠ {ip}  →  İPTAL EDİLDİ",
             };
             return AppendAsync($"{Time()}  {text}{Environment.NewLine}{ThinRule}");
