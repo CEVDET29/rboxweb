@@ -278,6 +278,7 @@ namespace RboxAgent.Modules.Update.Core
             cidr = 0;
             error = string.Empty;
             value = (value ?? string.Empty).Trim();
+            if (value.StartsWith('/')) value = value[1..].Trim();     // "/24" = "24"
 
             if (int.TryParse(value, out int direct))
             {

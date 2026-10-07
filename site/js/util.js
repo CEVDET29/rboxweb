@@ -74,6 +74,67 @@ export function downloadCsv(fileName, headers, rows) {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
+// ── IP alanları için giriş kuralı (WPF Common/IpInput.cs ile aynı) ──
+// Yalnızca rakam ve nokta, en fazla 4 oktet, her oktet 0–255 (uymayacaksa giriş yapılmaz). Oktetlerin baştaki
+// sıfırları atılır: "02.03.200.01" → "2.3.200.1" ("0" tek başına kalır; 0.0.0.0 geçerli).
+// Maske alanında ayrıca "/24" ya da "24" (CIDR 0–32) yazılabilir.
+
+/** Oktetlerin baştaki sıfırlarını atar; caret: imleç konumu, yeni konumu da döner. Maskedeki "/024" → "/24". */
+export function normalizeIp(text, caret = text.length) {
+  let out = "", newCaret = -1, segStart = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (i === caret) newCaret = out.length;
+    const c = text[i];
+    if (c === "." || c === "/") { out += c; segStart = out.length; continue; }
+    // Bu oktette şimdiye kadar yalnızca "0" varsa ve ardından rakam geliyorsa o sıfır atılır
+    if (/\d/.test(c) && out.length - segStart === 1 && out[segStart] === "0") {
+      out = out.slice(0, segStart);
+      if (newCaret > segStart) newCaret--;
+    }
+    out += c;
+  }
+  return { text: out, caret: newCaret < 0 ? out.length : newCaret };
+}
+
+/** Yazılmakta olan (yarım da olabilir: "172.16.") IPv4 geçerli mi (baştaki sıfırlar atılmış hâliyle). */
+export function isPartialIp(text) {
+  if (text === "") return true;
+  if (!/^[\d.]*$/.test(text)) return false;
+  const parts = text.split(".");
+  if (parts.length > 4) return false;
+  return parts.every((p, i) => (p === "" ? i === parts.length - 1 && i > 0 : p.length <= 3 && +p <= 255));
+}
+
+/** Ağ maskesi: IPv4 biçimi ya da CIDR ("/24", "24"). */
+export function isPartialMask(text) {
+  if (text.startsWith("/")) { const n = text.slice(1); return n === "" || (/^\d{1,2}$/.test(n) && +n <= 32); }
+  return isPartialIp(text);
+}
+
+/** Metin kutusuna yalnızca kurala uyan girişi (yazma / yapıştırma) kabul ettirir. kind: "ip" | "mask". */
+export function ipFilter(input, kind = "ip") {
+  const ok = (t) => (kind === "mask" ? isPartialMask(t) : isPartialIp(t));
+  input.addEventListener("beforeinput", (e) => {
+    const paste = e.inputType === "insertFromPaste" || e.inputType === "insertFromDrop";
+    if (e.data == null && !paste) return;                               // silme / biçim: serbest
+    const el = e.target;
+    // Yapıştırmada baştaki / sondaki boşluk ve satır sonu atılır (Excel hücresinden kopyalama)
+    const data = paste ? (e.data ?? e.dataTransfer?.getData("text/plain") ?? "").trim() : e.data;
+    // Kayıtlı değer zaten kurala uymuyorsa (eski ayar) düzeltmeye izin ver: yalnızca karakter türü denetlenir
+    if (!ok(normalizeIp(el.value).text)) { if (!/^[\d./]*$/.test(data)) e.preventDefault(); return; }
+    const start = el.selectionStart, raw = el.value.slice(0, start) + data + el.value.slice(el.selectionEnd);
+    const n = normalizeIp(raw, start + data.length);
+    if (!ok(n.text)) { e.preventDefault(); return; }
+    if (paste || n.text !== raw) {
+      // Kırpılmış / sıfırları atılmış metni kendimiz yaz
+      e.preventDefault();
+      el.value = n.text;
+      el.setSelectionRange(n.caret, n.caret);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+}
+
 /** Oda / yoğun bakım (bölüm) renkleri; WPF'teki UnitColors ile aynı sıra. */
 export const UNIT_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6", "#EF4444", "#84CC16"];
 export const unitColor = (i) => (i < 0 ? "transparent" : UNIT_COLORS[i % UNIT_COLORS.length]);
@@ -87,6 +148,7 @@ export const ICONS = {
   palette: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.7-.9 1.4-1.8l-.4-1.2A1.5 1.5 0 0 1 14.4 16H17a4 4 0 0 0 4-4c0-5-4-9-9-9z"/><circle cx="7.5" cy="11" r="1.2" fill="currentColor"/><circle cx="10" cy="7" r="1.2" fill="currentColor"/><circle cx="14.5" cy="7" r="1.2" fill="currentColor"/><circle cx="17" cy="11" r="1.2" fill="currentColor"/></svg>',
   port: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 7V4h8v3M7 12v3M10.3 12v3M13.7 12v3M17 12v3"/></svg>',
   tcp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></svg>',
+  chip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>',
   upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3m0 0l-4 4m4-4l4 4M4 21h16"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',

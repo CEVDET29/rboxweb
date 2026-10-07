@@ -611,15 +611,15 @@ namespace RboxAgent
                     return;
                 }
 
-                // ── TCP Dinleyici (gelen veriyi gösterir, karşıya bir şey göndermez) ──
+                // ── TCP (dinleyici / istemci; gelen veriyi gösterir, karşıya bir şey göndermez) ──
                 case ("GET", "/api/tcp/addresses"):
-                    await Reply(res, TcpListenService.Addresses());
+                    await Reply(res, TcpService.Addresses());
                     return;
 
                 case ("POST", "/api/tcp/start"):
                 {
                     var b = await Body<TcpStartIn>(req);
-                    var (ok, error, id) = TcpListenService.Start(b.Port, b.Bind);
+                    var (ok, error, id) = TcpService.Start(b.Mode, b.Port, b.Bind, b.Hosts);
                     await Reply(res, ok ? new { ok, id } : new { ok, error }, ok ? 200 : 422);
                     return;
                 }
@@ -628,15 +628,23 @@ namespace RboxAgent
                 case ("POST", "/api/tcp/remove"):
                 {
                     var b = await Body<LiveIdIn>(req);
-                    bool ok = path == "/api/tcp/stop" ? TcpListenService.Stop(b.Id) : TcpListenService.Remove(b.Id);
+                    bool ok = path == "/api/tcp/stop" ? TcpService.Stop(b.Id) : TcpService.Remove(b.Id);
                     await Reply(res, new { ok });
+                    return;
+                }
+
+                case ("POST", "/api/tcp/hosts/add"):
+                case ("POST", "/api/tcp/hosts/remove"):
+                {
+                    var b = await Body<TcpHostIn>(req);
+                    await Reply(res, new { ok = TcpService.Host(b.Id, b.Host, path.EndsWith("/add")) });
                     return;
                 }
 
                 case ("POST", "/api/tcp/poll"):
                 {
                     var b = await Body<TcpPollIn>(req);
-                    await Reply(res, TcpListenService.Poll(b.Id, b.After));
+                    await Reply(res, TcpService.Poll(b.Id, b.After));
                     return;
                 }
             }
@@ -647,7 +655,8 @@ namespace RboxAgent
         private sealed class IpIn { public string? Ip { get; set; } }
         private sealed class PortQueryIn { public string? Query { get; set; } public string? Host { get; set; } }
         private sealed class LiveIdIn { public int Id { get; set; } }
-        private sealed class TcpStartIn { public int Port { get; set; } public string? Bind { get; set; } }
+        private sealed class TcpStartIn { public string? Mode { get; set; } public int Port { get; set; } public string? Bind { get; set; } public List<string>? Hosts { get; set; } }
+        private sealed class TcpHostIn { public int Id { get; set; } public string? Host { get; set; } }
         private sealed class TcpPollIn { public int Id { get; set; } public long After { get; set; } }
         private sealed class CihazSaveIn { public CihazKaydi? Original { get; set; } public CihazKaydi? Changed { get; set; } }
         private sealed class CihazBulkIn { public List<CihazKaydi>? Rows { get; set; } }

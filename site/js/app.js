@@ -17,8 +17,8 @@ const MODULES = [
   { id: "control", title: "Cihaz Kontrol", icon: ICONS.control, sub: "Cihazların anlık durumu ve toplu işlemler" },
   { id: "ybdb", title: "YBDB Odalar", icon: ICONS.ybdb, sub: "Oda, yatak ve doluluk durumu" },
   { id: "files", title: "Dosyalar", icon: ICONS.files, sub: "Güncelleme dosyalarını bu hastane için düzenle" },
-  { id: "port", title: "Port Kontrol", icon: ICONS.port, sub: "Portu dinleyen uygulama, uygulamanın portları ve uzak bilgisayarda port durumu" },
-  { id: "tcp", title: "TCP Dinleyici", icon: ICONS.tcp, sub: "Bir portu dinle; bağlanan cihazları ve gönderdikleri veriyi canlı gör" },
+  { id: "port", title: "Port Kontrol", icon: ICONS.port, sub: "Ajanın çalıştığı bilgisayarda portu dinleyen uygulama ve uygulamanın dinlediği portlar" },
+  { id: "tcp", title: "TCP Dinleyici / İstemci", tab: "TCP", icon: ICONS.tcp, sub: "Bir portu dinle ya da listedeki cihazlara bağlan; gelen veriyi metin, hex ya da JSON olarak canlı gör" },
 ];
 
 const screens = { gate: $("#gate"), connect: $("#connect"), app: $("#app") };
@@ -188,7 +188,7 @@ function enterApp() {
   loadSsh();
 
   $("#tabs").innerHTML = MODULES.map((m) =>
-    `<button class="tab${m.soon ? " soon" : ""}" role="tab" data-m="${m.id}" aria-selected="false" title="${m.soon ? "Bu modül sonraki aşamada eklenecek" : m.title}">${m.icon}<span>${m.title}</span></button>`).join("");
+    `<button class="tab${m.soon ? " soon" : ""}" role="tab" data-m="${m.id}" aria-selected="false" title="${m.soon ? "Bu modül sonraki aşamada eklenecek" : m.title}">${m.icon}<span>${m.tab ?? m.title}</span></button>`).join("");
   $("#tabs").addEventListener("click", (e) => { const t = e.target.closest("[data-m]"); if (t) select(t.dataset.m); });
 
   select(storeGet("rbox.module") in Object.fromEntries(MODULES.map((m) => [m.id, 1])) ? storeGet("rbox.module") : "ping");
@@ -421,7 +421,35 @@ $("#btnCompact").addEventListener("click", () => {
 });
 if (storeGet("rbox.compact") === "1") document.body.classList.add("compact");
 
-$("#btnLogout").addEventListener("click", () => { sessionSet("rbox.auth", null); setToken(""); location.reload(); });
+// ── Tam ekran (F) ────────────────────────────────────────────
+// Tarayıcı tam ekrana geçer ve üst bant gizlenir; her modül ekranın tamamını kullanır. F ya da Esc ile çıkılır
+// (tarayıcı tam ekranında Esc'yi tarayıcı yakalar; çıkış fullscreenchange ile fark edilir).
+function setFullScreen(on) {
+  if (on === document.body.classList.contains("fullscreen")) return;
+  document.body.classList.toggle("fullscreen", on);
+  if (on) {
+    document.documentElement.requestFullscreen?.().catch(() => { /* izin yoksa yalnızca üst bant gizlenir */ });
+    toast("Tam ekran · çıkmak için F ya da Esc", 2500);
+  } else if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+$("#btnFull").addEventListener("click", () => setFullScreen(true));
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) setFullScreen(false); });
+document.addEventListener("keydown", (e) => {
+  if (screens.app.hidden || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  // Yazı alanındayken F harf olarak kalır (onay kutusu / düğme odaktayken kısayol çalışır)
+  const t = e.target;
+  const typing = t.isContentEditable || t.matches?.("textarea, select, input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])");
+  if (e.key.toLowerCase() === "f" && !e.shiftKey && !typing) {
+    e.preventDefault();
+    setFullScreen(!document.body.classList.contains("fullscreen"));
+  } else if (e.key === "Escape" && document.body.classList.contains("fullscreen") && !typing && !e.defaultPrevented) {
+    setFullScreen(false);
+  }
+});
+
+$("#btnLogout").addEventListener("click",() => { sessionSet("rbox.auth", null); setToken(""); location.reload(); });
 
 // ── Başlangıç ────────────────────────────────────────────────
 // Ajan tarayıcıyı ".../#code=ABC-123" ile açar: kodu al, adresten sil (geçmişte/paylaşımda kalmasın).

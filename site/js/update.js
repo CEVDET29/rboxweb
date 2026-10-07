@@ -1,7 +1,7 @@
 // Cihaz Güncelleme modülü: SSH ile toplu güncelleme, versiyon kontrolü, TTY mesajı ve tek cihaz ayarları.
 // WPF UpdateView / UpdateViewModel karşılığı. Adımların kendisi ajandadadır (UpdateCoordinator, WPF ile aynı kod).
 import { api, stream } from "./api.js";
-import { $, $$, esc, debounce, toast, copyText, ICONS } from "./util.js";
+import { $, $$, esc, debounce, toast, copyText, ipFilter, ICONS } from "./util.js";
 
 const DASH = "—";
 
@@ -295,6 +295,12 @@ export function createUpdate(ctx) {
     progWrap: q("uProgWrap"), bar: q("uBar"), prog: q("uProg"), version: q("uVersion"), start: q("uStart"),
     ttyTarget: q("uTtyTarget"), tty: q("uTty"), options: q("uOptions"), dhcp: q("uDhcp"), session: q("uSession"),
   };
+
+  // IP / maske alanları: ortak giriş kuralı (util.js ipFilter)
+  ipFilter(el.newIp);
+  ipFilter(q("sIp"));
+  for (const k of ["wlan0Gateway", "eth0Gateway", "singleServerIp", "singleEth0Ip", "singleWlan0Ip"]) ipFilter($(`[data-cfg="${k}"]`, root));
+  for (const k of ["wlan0Mask", "eth0Mask", "singleEth0Mask", "singleWlan0Mask"]) ipFilter($(`[data-cfg="${k}"]`, root), "mask");
 
   // ── Günlük ──────────────────────────────────────────────────
   const MAX_LOG = 5000;
@@ -616,6 +622,7 @@ export function createUpdate(ctx) {
     const field = td.dataset.edit;
     const input = document.createElement("input");
     input.type = "text"; input.className = "cell-edit mono-input"; input.value = r[field];
+    if (field === "ip" || field === "wlan0" || field === "eth0") ipFilter(input);
     td.textContent = ""; td.append(input); input.focus(); input.select();
 
     let finished = false;

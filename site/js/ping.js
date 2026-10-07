@@ -72,35 +72,29 @@ export function createPing(ctx) {
   // ── İskelet ─────────────────────────────────────────────────
   root.innerHTML = `
     <section class="card">
-      <div class="card-h">Kontrol</div>
+      <div class="card-h">Tarama</div>
       <div class="card-b">
-        <div class="row">
-          <div style="flex:1;min-width:240px"><b id="pFile">Cihaz listesi seçilmedi</b>
-            <div class="sm muted" id="pFileSub">Üst banttaki "Cihaz listesi" düğmesinden Excel seçin (tüm modüller aynı listeyi kullanır).</div></div>
+        <!-- Başlat / CSV ve özet hapları (tıklanınca tabloyu filtreler); dar ekranda alt satıra kayar -->
+        <div class="row tight">
           <button class="btn primary" id="pStart">${ICONS.play} <span>Kontrolü başlat</span></button>
-          <button class="btn" id="pExport">${ICONS.down} CSV</button>
-        </div>
-        <div class="progress" style="margin-top:14px"><div id="pBar"></div></div>
-        <div class="sm muted" id="pStatus" style="margin-top:6px">Hazır</div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-h">Kontrol seçenekleri</div>
-      <div class="card-b">
-        <div class="row" style="gap:22px">
-          <label class="chk"><input type="checkbox" id="oSsh"> SSH portu (22)</label>
-          <label class="chk"><input type="checkbox" id="oMac"> MAC adresi</label>
-          <label class="chk"><input type="checkbox" id="oVendor"> Üretici</label>
-          <label class="chk" title="ARP'den MAC okunamazsa SSH ile cihazdan okur"><input type="checkbox" id="oFallback"> SSH ile MAC (yedek)</label>
+          <button class="btn" id="pExport" style="margin-right:12px">${ICONS.down} CSV</button>
+          <span class="spills" id="pTiles"></span>
           <span class="spacer" style="flex:1"></span>
           <label class="chk"><input type="checkbox" id="oMonitor"> <span id="oMonitorText">İzleme modu</span></label>
         </div>
-        <div class="sm muted" style="margin-top:10px">SSH kullanıcı / şifre: üst banttaki <b>SSH</b> düğmesinden girilir (tüm modüller için ortak).</div>
+        <div class="progress" style="margin-top:12px"><div id="pBar"></div></div>
+        <div class="sm muted" style="margin-top:6px"><span id="pStatus">Hazır</span> · <b id="pFile">Cihaz listesi seçilmedi</b> <span id="pFileSub">— üst banttaki "Cihaz listesi" düğmesinden Excel seçin.</span></div>
+        <hr class="divider" style="margin:12px 0">
+        <div class="row" style="gap:20px">
+          <span class="sm muted">Kontroller</span>
+          <label class="chk"><input type="checkbox" id="oSsh"> SSH portu (22)</label>
+          <label class="chk"><input type="checkbox" id="oMac"> MAC adresi</label>
+          <label class="chk" title="ARP'den MAC okunamazsa SSH ile cihazdan okur"><input type="checkbox" id="oFallback"> SSH ile MAC (yedek)</label>
+          <label class="chk"><input type="checkbox" id="oVendor"> Üretici</label>
+          <span class="sm muted">SSH kullanıcı / şifre: üst banttaki <b>SSH</b> düğmesinden (tüm modüller için ortak)</span>
+        </div>
       </div>
     </section>
-
-    <div class="tiles" id="pTiles"></div>
 
     <div class="ping-split" id="pSplit">
     <section class="card">
@@ -110,8 +104,8 @@ export function createPing(ctx) {
         <span class="spacer" style="flex:1"></span>
         <span class="sm muted">Sürekli ping için satıra çift tıklayın</span>
       </div>
-      <div class="table-wrap"><table class="fixed" style="min-width:1240px">
-        <colgroup><col style="width:120px"><col style="width:80px"><col style="width:130px"><col style="width:150px"><col style="width:96px"><col style="width:80px"><col style="width:170px"><col><col style="width:150px"><col style="width:164px"></colgroup>
+      <div class="table-wrap"><table class="fixed" style="min-width:1316px">
+        <colgroup><col style="width:44px"><col style="width:120px"><col style="width:80px"><col style="width:130px"><col style="width:150px"><col style="width:96px"><col style="width:80px"><col style="width:170px"><col><col style="width:150px"><col style="width:196px"></colgroup>
         <thead><tr id="pHead"></tr></thead>
         <tbody id="pBody"></tbody>
       </table></div>
@@ -181,15 +175,16 @@ export function createPing(ctx) {
     rows = devices.rows.map((d, id) => {
       const key = d.oda.toLocaleLowerCase("tr");
       if (!map.has(key)) { map.set(key, rooms.length); rooms.push({ title: d.oda || "(Oda belirtilmemiş)", idx: rooms.length, collapsed: false }); }
-      return { ...d, id, room: map.get(key), state: "idle", res: null, optKey: null, changed: false, error: "" };
+      return { ...d, id, room: map.get(key), checked: true, state: "idle", res: null, optKey: null, changed: false, error: "" };
     });
     fileName = devices.fileName;
     lastRunInfo = "";
     el.file.textContent = fileName || "Cihaz listesi seçilmedi";
     el.fileSub.textContent = fileName
-      ? `${rows.length} cihaz · ${rooms.length} grup · değiştirmek için üst banttaki "Cihaz listesi" düğmesini kullanın`
-      : `Üst banttaki "Cihaz listesi" düğmesinden Excel seçin (tüm modüller aynı listeyi kullanır).`;
+      ? `— ${rows.length} cihaz · ${rooms.length} grup`
+      : `— üst banttaki "Cihaz listesi" düğmesinden Excel seçin.`;
     stopMonitorIfEmpty();
+    updateUi();
     render();
     return true;
   }
@@ -256,8 +251,13 @@ export function createPing(ctx) {
       return;
     }
     if (rows.length === 0) { toast("Önce üst banttaki \"Cihaz listesi\" düğmesinden bir Excel dosyası seçin."); return; }
-    runChecks(rows, true);
+    const list = checkedRows();
+    if (list.length === 0) { toast("Kontrol edilecek cihaz seçilmedi. Tablodaki kutulardan cihaz ya da oda işaretleyin.", 4000); return; }
+    runChecks(list, true);
   }
+
+  // Kontrol ve izleme modu yalnızca işaretli cihazlara ping atar; satırdaki düğmeler seçimden bağımsızdır.
+  const checkedRows = () => rows.filter((r) => r.checked);
   el.start.addEventListener("click", startStop);
 
   // ── İzleme modu ─────────────────────────────────────────────
@@ -265,8 +265,8 @@ export function createPing(ctx) {
     clearInterval(monitorTimer); monitorTimer = null;
     if (el.monitor.checked) {
       if (rows.length === 0) { toast("İzleme modu için önce bir Excel dosyası seçin."); el.monitor.checked = false; return; }
-      monitorTimer = setInterval(() => { if (!running && rows.length) runChecks(rows, false); }, cfg.monitorIntervalMin * 60_000);
-      if (!running) runChecks(rows, false);
+      monitorTimer = setInterval(() => { if (!running) runChecks(checkedRows(), false); }, cfg.monitorIntervalMin * 60_000);
+      if (!running) runChecks(checkedRows(), false);
     }
     updateStatus();
   });
@@ -346,26 +346,32 @@ export function createPing(ctx) {
   function render() {
     // Üst kutucuklar
     const s = stats();
-    const tile = (id, label, n, cls) =>
-      `<button class="tile ${cls}" data-f="${id}" aria-pressed="${filter === id}"><div class="n">${n}</div><div class="l">${label}</div></button>`;
+    const tile = (id, label, n, cls, tip) =>
+      `<button class="spill ${cls}" data-f="${id}" aria-pressed="${filter === id}" title="${tip}">${cls ? "<i></i>" : ""}<span class="l">${label}</span><b>${n}</b></button>`;
     el.tiles.innerHTML =
-      tile("all", "Toplam cihaz", rows.length, "") + tile("ok", "Ulaşılan", s.ok, "ok") +
-      tile("noreply", "Yanıt yok", s.noreply, "warn") + tile("mismatch", "MAC uyuşmuyor", s.mismatch, "err") +
-      tile("problems", "Sorunlu", s.problems, "err");
+      tile("all", "Toplam", rows.length, "", "Tüm cihazları göster") + tile("ok", "PING OK", s.ok, "ok", "Yalnızca ping yanıtı verenler") +
+      tile("noreply", "Yanıt yok", s.noreply, "warn", "Yalnızca yanıt vermeyenler") +
+      tile("mismatch", "MAC uyuşmazlığı", s.mismatch, "err", "Yalnızca MAC'i Excel'le uyuşmayanlar") +
+      tile("problems", "Sorunlu", s.problems, "err", "Yalnızca sorunlu cihazlar");
 
     // Başlık
-    el.head.innerHTML = COLUMNS.map((c) =>
+    const nChecked = rows.filter((r) => r.checked).length;
+    const allState = nChecked === 0 ? false : nChecked === rows.length ? true : null;
+    el.head.innerHTML = `<th style="cursor:default"><input type="checkbox" id="pAllBox" ${allState ? "checked" : ""} ${running ? "disabled" : ""}
+        title="Tümünü seç / kaldır (yalnızca seçili cihazlar kontrol edilir)"></th>` +
+      COLUMNS.map((c) =>
       `<th data-k="${c.key}">${c.label}${sort.key === c.key ? `<span class="arr">${sort.dir > 0 ? "▲" : "▼"}</span>` : ""}</th>`).join("") + "<th></th>";
+    const allBox = $("#pAllBox", el.head); if (allBox) allBox.indeterminate = allState === null;
 
     const list = visibleRows();
     el.count.textContent = rows.length ? `${list.length} / ${rows.length} satır` : "";
 
     if (rows.length === 0) {
-      el.body.innerHTML = `<tr><td class="empty" colspan="${COLUMNS.length + 1}">Cihaz listesi yok.<br>Yukarıdan bir Excel dosyası seçin ya da buraya sürükleyin.</td></tr>`;
+      el.body.innerHTML = `<tr><td class="empty" colspan="${COLUMNS.length + 2}">Cihaz listesi yok.<br>Yukarıdan bir Excel dosyası seçin ya da buraya sürükleyin.</td></tr>`;
       return;
     }
     if (list.length === 0) {
-      el.body.innerHTML = `<tr><td class="empty" colspan="${COLUMNS.length + 1}">Filtreye uyan satır yok.</td></tr>`;
+      el.body.innerHTML = `<tr><td class="empty" colspan="${COLUMNS.length + 2}">Filtreye uyan satır yok.</td></tr>`;
       return;
     }
 
@@ -376,14 +382,19 @@ export function createPing(ctx) {
         lastRoom = r.room;
         const members = rows.filter((x) => x.room === r.room);
         const prob = members.filter((x) => x.res?.hasProblem).length;
-        html += `<tr class="group" data-room="${r.room}" style="cursor:pointer"><td colspan="${COLUMNS.length + 1}">
+        const mc = members.filter((x) => x.checked).length;
+        // Oda kutusu satırlardaki kutuyla aynı sütunda; karışıksa yarı dolu (indeterminate, aşağıda atanır)
+        html += `<tr class="group" data-room="${r.room}" style="cursor:pointer">
+          <td><input type="checkbox" data-roomcheck="${r.room}" ${mc === members.length ? "checked" : ""} data-mixed="${mc > 0 && mc < members.length ? 1 : 0}"
+            ${running ? "disabled" : ""} title="Bu odadaki tüm cihazları seç / kaldır"></td><td colspan="${COLUMNS.length + 1}">
           <span class="gchip" style="background:${ROOM_COLORS[r.room % ROOM_COLORS.length]}"></span>${room.collapsed ? "▸" : "▾"} ${esc(room.title)}
-          <span class="gcount">${members.length} cihaz${prob ? ` · <span class="txt-error">${prob} sorunlu</span>` : ""}</span></td></tr>`;
+          <span class="gcount">${members.length} cihaz${mc < members.length ? ` · ${mc} seçili` : ""}${prob ? ` · <span class="txt-error">${prob} sorunlu</span>` : ""}</span></td></tr>`;
       }
       if (room.collapsed) continue;
 
       const ping = cell(r, "ping"), ssh = cell(r, "ssh"), dm = cell(r, "mac"), ven = cell(r, "vendor"), st = cell(r, "status");
-      html += `<tr class="item${r.changed ? " changed" : ""}" data-id="${r.id}">
+      html += `<tr class="item${r.changed ? " changed" : ""}${r.checked ? "" : " off"}" data-id="${r.id}">
+        <td><input type="checkbox" data-check ${r.checked ? "checked" : ""} ${running ? "disabled" : ""}></td>
         <td>${esc(r.yatak) || DASH}</td>
         <td>${esc(r.yatakId) || DASH}</td>
         <td class="mono"><span class="ipcell">${esc(r.ip)}<button class="copy-ip" data-act="copy" title="IP adresini kopyala">${ICONS.copy}</button></span></td>
@@ -397,14 +408,33 @@ export function createPing(ctx) {
           <button class="btn icon" data-act="live" title="Sürekli ping (ping -t) — sağ panelde açılır">${ICONS.ping}</button>
           <button class="btn icon" data-act="recheck" title="Yeniden kontrol et">${ICONS.redo}</button>
           <button class="btn icon" data-act="copy" title="IP'yi kopyala">${ICONS.copy}</button>
+          <button class="btn icon" data-act="copymac" title="MAC'i kopyala (cihazdan okunan, yoksa Excel'deki)">${ICONS.chip}</button>
           <button class="btn icon" data-act="ssh" title="SSH ile bağlan (sunucuda terminal açar)">${ICONS.term}</button>
           <button class="btn icon" data-act="web" title="Tarayıcıda aç">${ICONS.globe}</button>
         </td></tr>`;
     }
     el.body.innerHTML = html;
+    $$("input[data-mixed='1']", el.body).forEach((i) => { i.indeterminate = true; });
   }
 
+  el.head.addEventListener("change", (e) => {
+    if (e.target.id !== "pAllBox" || running) return;
+    rows.forEach((r) => (r.checked = e.target.checked)); updateUi(); render();
+  });
+
+  el.body.addEventListener("change", (e) => {
+    if (running) return;
+    if (e.target.matches("input[data-roomcheck]")) {
+      const room = +e.target.dataset.roomcheck;
+      rows.forEach((r) => { if (r.room === room) r.checked = e.target.checked; });
+    } else if (e.target.matches("input[data-check]")) {
+      rows[+e.target.closest("tr").dataset.id].checked = e.target.checked;
+    } else return;
+    updateUi(); render();
+  });
+
   el.body.addEventListener("click", async (e) => {
+    if (e.target.matches("input[type=checkbox]")) return;         // seçim kutusu: odayı açıp kapatmasın
     const g = e.target.closest("tr.group");
     if (g) { const room = rooms[+g.dataset.room]; room.collapsed = !room.collapsed; render(); return; }
 
@@ -416,6 +446,14 @@ export function createPing(ctx) {
       case "copy":
         try { await copyText(r.ip); toast("IP kopyalandı: " + r.ip); } catch { toast("Kopyalanamadı"); }
         break;
+      case "copymac": {
+        // Cihazdan okunan MAC geçerliyse o, değilse Excel'deki
+        const read = r.state === "pending" || r.state === "running" ? "" : r.res?.mac?.text;
+        const mac = /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/i.test(read || "") ? read : (r.mac || "");
+        if (!mac) { toast("Bu satırda MAC yok"); break; }
+        try { await copyText(mac); toast("MAC kopyalandı: " + mac); } catch { toast("Kopyalanamadı"); }
+        break;
+      }
       case "ssh":
         try { await api("/api/ping/ssh", { method: "POST", body: { ip: r.ip } }); } catch (err) { toast("SSH başlatılamadı: " + err.message); }
         break;
@@ -425,7 +463,7 @@ export function createPing(ctx) {
 
   // Satıra çift tıklama: o IP için sürekli ping (düğmelerin üzerinde değilse)
   el.body.addEventListener("dblclick", (e) => {
-    if (e.target.closest("[data-act]")) return;
+    if (e.target.closest("[data-act], input")) return;
     const tr = e.target.closest("tr.item"); if (!tr) return;
     const r = rows[+tr.dataset.id];
     window.getSelection()?.removeAllRanges();          // çift tıklamanın seçtiği metni bırak
@@ -586,7 +624,9 @@ export function createPing(ctx) {
   }
 
   function updateUi() {
-    el.start.innerHTML = running ? `${ICONS.stop} <span>Durdur</span>` : `${ICONS.play} <span>Kontrolü başlat</span>`;
+    const nChecked = rows.filter((r) => r.checked).length;
+    el.start.innerHTML = running ? `${ICONS.stop} <span>Durdur</span>`
+      : `${ICONS.play} <span>${nChecked < rows.length ? `Seçilenleri kontrol et (${nChecked})` : "Kontrolü başlat"}</span>`;
     el.start.classList.toggle("danger", running);
     el.start.classList.toggle("primary", !running);
     el.bar.style.width = total ? `${Math.round((done / total) * 100)}%` : "0";

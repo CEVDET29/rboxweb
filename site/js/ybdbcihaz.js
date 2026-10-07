@@ -1,7 +1,7 @@
 // YBDB Odalar → "Cihazlar" sekmesi: dbo.Cihaz'da ekle / güncelle / sil + toplu ekle (yalnızca Id, Adi, CTS, IP, Port, YatakId).
 // Yazma ajandaki CihazRepository'de (WPF ile aynı kod). Düzen WPF ile aynı: solda form, ortada tablo, sağda toplu ekle.
 import { api } from "./api.js";
-import { $, $$, esc, toast, ICONS } from "./util.js";
+import { $, $$, esc, toast, ipFilter, ICONS } from "./util.js";
 
 const DASH = "—";
 const COLS = [
@@ -27,15 +27,9 @@ const tr = (s) => String(s ?? "").toLocaleLowerCase("tr");
 const isIpv4 = (s) => /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(s);
 const isPort = (s) => /^\d{1,5}$/.test(s) && +s <= 65535;
 
-/** Yazılmakta olan (yarım da olabilir) değer geçerli mi: ip (0–255 bölümler, en çok 3 nokta), port (≤65535), digits3 (≤3 rakam). */
+/** Yazılmakta olan (yarım da olabilir) değer geçerli mi: port (≤65535), digits3 (≤3 rakam). IP kutuları util.js ipFilter'ı kullanır. */
 function validPartial(kind, text) {
   if (text === "") return true;
-  if (kind === "ip") {
-    if (!/^[\d.]*$/.test(text)) return false;
-    const parts = text.split(".");
-    if (parts.length > 4) return false;
-    return parts.every((p, i) => (p === "" ? (i === parts.length - 1 && i > 0) : p.length <= 3 && +p <= 255));
-  }
   if (kind === "port") return /^\d{1,5}$/.test(text) && +text <= 65535;
   if (kind === "digits3") return /^\d{1,3}$/.test(text);
   return true;
@@ -110,7 +104,7 @@ export function createCihazEditor({ getYataklar }) {
         <input type="search" id="czSearch" placeholder="Ara: ad, IP, port, yatak…" style="flex:1;min-width:180px">
         <label class="chk" title="Hastane yazılımının silindi olarak işaretlediği (SilinmeTarihi dolu) satırlar"><input type="checkbox" id="czDeleted"> Silinmiş işaretlileri göster</label>
       </div>
-      <div class="table-wrap" style="max-height:calc(100vh - 360px)"><table class="fixed" style="min-width:560px">
+      <div class="table-wrap" style="max-height:calc(100vh - 360px + var(--gain, 0px))"><table class="fixed" style="min-width:560px">
         <colgroup>${COLS.map((c) => `<col${c.w ? ` style="width:${c.w}px"` : ""}>`).join("")}</colgroup>
         <thead><tr id="czHead"></tr></thead><tbody id="czBody"></tbody></table></div>
     </section>
@@ -154,8 +148,8 @@ export function createCihazEditor({ getYataklar }) {
   };
   const formInputs = [el.adi, el.cts, el.ip, el.port, el.yatak];
 
-  attachFilter(el.ip, "ip"); attachFilter(el.port, "port"); attachFilter(el.yatak, "digits3");
-  attachFilter(el.bkIp, "ip"); attachFilter(el.bkPort, "port"); attachFilter(el.bkFrom, "digits3"); attachFilter(el.bkTo, "digits3");
+  ipFilter(el.ip); attachFilter(el.port, "port"); attachFilter(el.yatak, "digits3");   // IP: tüm IP alanlarıyla aynı kural (util.js)
+  ipFilter(el.bkIp); attachFilter(el.bkPort, "port"); attachFilter(el.bkFrom, "digits3"); attachFilter(el.bkTo, "digits3");
 
   // ── Veri ────────────────────────────────────────────────────
   const yatakMap = () => new Map(getYataklar().map((y) => [String(y.yatakId), y]));

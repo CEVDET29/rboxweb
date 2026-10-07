@@ -1,5 +1,5 @@
-// Port Kontrol modülü: bir portu dinleyen uygulamayı / bir uygulamanın dinlediği portları bulur (bu sunucu),
-// ya da uzak bilgisayarda portun açık olup olmadığını, bilgisayar adını ve işletim sistemini gösterir.
+// Port Kontrol modülü: ajanın çalıştığı bilgisayarda bir portu dinleyen uygulamayı / bir uygulamanın dinlediği
+// portları bulur. (Uzak bilgisayar sorgusu arayüzden kaldırıldı; ajandaki kod duruyor.)
 // Tüm iş ajandaki PortInspector'da (WPF ile aynı kod); burası yalnızca sonucu gösterir. Salt okunur.
 import { api } from "./api.js";
 import { $, esc, storeGet, storeSet, toast, ICONS } from "./util.js";
@@ -31,7 +31,9 @@ export function createPort() {
 
   let report = null, busy = false;
   let epSearch = "", epSort = { key: null, dir: 1 };
-  let history = storeGet("rbox.port.history", "").split("\n").filter(Boolean);
+  // Eski kayıtlardaki "@ bilgisayar" (uzak) sorguları gösterilmez
+  let history = storeGet("rbox.port.history", "").split("\n")
+    .filter((h) => h && !h.split("\t")[1]).map((h) => h.split("\t")[0]);
 
   root.innerHTML = `
     <section class="card">
@@ -40,61 +42,54 @@ export function createPort() {
         <div class="row" style="align-items:flex-end">
           <div><label class="field-label" for="pQuery">Port ya da uygulama</label>
             <input type="text" id="pQuery" style="width:320px" autocomplete="off" placeholder="ör. 1433 · 80,443 · 8000-8010 · sqlservr.exe"></div>
-          <div><label class="field-label" for="pHost">Bilgisayar</label>
-            <input type="text" id="pHost" style="width:230px" autocomplete="off" placeholder="boş = bu sunucu · IP ya da ad"></div>
           <button class="btn primary" id="pRun">${ICONS.play} Sorgula</button>
           <span class="spacer" style="flex:1"></span>
           <span class="sm muted" id="pState"></span>
         </div>
         <div class="row tight" style="margin-top:12px"><span class="sm muted">Hızlı:</span><span class="chips" id="pQuick"></span></div>
         <div class="row tight" style="margin-top:8px" id="pHistRow" hidden><span class="sm muted">Son sorgular:</span><span class="chips" id="pHist"></span></div>
-        <p class="sm muted" style="margin:10px 0 0">Bilgisayar boşsa bu sunucuda portu dinleyen uygulama, sürüm, hizmet, kullanıcı, bağlantılar ve güvenlik duvarı kuralları gösterilir.
-          IP / ad girilirse o bilgisayarda portun açık olup olmadığı, bilgisayar adı, işletim sistemi tahmini ve MAC gösterilir (port boşsa yaygın portlar denenir).</p>
+        <p class="sm muted" style="margin:10px 0 0">Ajanın çalıştığı bilgisayarda portu dinleyen uygulama, sürüm, hizmet, kullanıcı, bağlantılar ve güvenlik duvarı kuralları gösterilir.
+          Uygulama adı girilirse (ör. sqlservr.exe) o uygulamanın dinlediği portlar gösterilir.</p>
       </div>
     </section>
     <div id="pOut" class="stack pstack"></div>`;
 
   const q = (id) => $("#" + id, root);
-  const el = { query: q("pQuery"), host: q("pHost"), run: q("pRun"), state: q("pState"), out: q("pOut"),
+  const el = { query: q("pQuery"), run: q("pRun"), state: q("pState"), out: q("pOut"),
                quick: q("pQuick"), hist: q("pHist"), histRow: q("pHistRow") };
 
   el.quick.innerHTML = QUICK.map(([v, l]) => `<button class="chip" data-q="${esc(v)}">${esc(l)}</button>`).join("");
   el.quick.addEventListener("click", (e) => {
     const b = e.target.closest("[data-q]"); if (!b) return;
-    el.query.value = b.dataset.q; el.host.value = ""; run();
+    el.query.value = b.dataset.q; run();
   });
   el.hist.addEventListener("click", (e) => {
     const b = e.target.closest("[data-i]"); if (!b) return;
-    const [qq, hh] = history[Number(b.dataset.i)].split("\t");
-    el.query.value = qq; el.host.value = hh ?? ""; run();
+    el.query.value = history[Number(b.dataset.i)]; run();
   });
   function renderHistory() {
     el.histRow.hidden = history.length === 0;
-    el.hist.innerHTML = history.map((h, i) => {
-      const [qq, hh] = h.split("\t");
-      return `<button class="chip" data-i="${i}">${esc(qq || "tümü")}${hh ? ` @ ${esc(hh)}` : ""}</button>`;
-    }).join("");
+    el.hist.innerHTML = history.map((h, i) => `<button class="chip" data-i="${i}">${esc(h || "tümü")}</button>`).join("");
   }
-  function remember(qq, hh) {
-    const key = `${qq}\t${hh}`;
-    history = [key, ...history.filter((x) => x !== key)].slice(0, 8);
+  function remember(qq) {
+    history = [qq, ...history.filter((x) => x !== qq)].slice(0, 8);
     storeSet("rbox.port.history", history.join("\n"));
     renderHistory();
   }
   renderHistory();
 
   el.run.addEventListener("click", run);
-  [el.query, el.host].forEach((i) => i.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); }));
+  el.query.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); });
 
   async function run() {
     if (busy) return;
-    const query = el.query.value.trim(), host = el.host.value.trim();
+    const query = el.query.value.trim();
     busy = true; el.run.disabled = true;
-    el.state.textContent = host ? `${host} sorgulanıyor…` : "Sorgulanıyor…";
+    el.state.textContent = "Sorgulanıyor…";
     try {
-      report = await api("/api/port/inspect", { method: "POST", body: { query, host } });
+      report = await api("/api/port/inspect", { method: "POST", body: { query, host: "" } });
       el.state.textContent = `${new Date().toLocaleTimeString("tr-TR")} · ${(report.elapsedMs / 1000).toFixed(1)} sn`;
-      if (report.ok) remember(query, host);
+      if (report.ok) remember(query);
       epSearch = ""; epSort = { key: null, dir: 1 };
       render();
     } catch (e) {
@@ -132,7 +127,7 @@ export function createPort() {
       h += `<section class="card"><div class="card-h row" style="justify-content:space-between">
           <span>${r.ports.length || r.names.length ? "Portlar ve bağlantılar" : "Dinlenen portlar"} (<span id="pEpCount">${r.endpoints.length}</span>)</span>
           <input type="search" id="pEpSearch" placeholder="Süz: port, adres, uygulama…" style="width:280px;text-transform:none;letter-spacing:0;font-weight:400"></div>
-        <div class="card-b" style="padding:10px 0 0"><div class="table-wrap" style="max-height:calc(100vh - 300px);min-height:120px">
+        <div class="card-b" style="padding:10px 0 0"><div class="table-wrap" style="max-height:calc(100vh - 300px + var(--gain, 0px));min-height:120px">
           <table class="fixed" style="min-width:1300px"><colgroup>${EP_COLS.map((c) => `<col${c.w ? ` style="width:${c.w}px"` : ""}>`).join("")}</colgroup>
           <thead><tr id="pEpHead"></tr></thead><tbody id="pEpBody"></tbody></table></div></div></section>`;
     }

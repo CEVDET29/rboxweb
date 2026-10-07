@@ -178,6 +178,11 @@ button, input, select { font: inherit; color: inherit; }
 
 /* ── İçerik ───────────────────────────────────────────────────────── */
 main { max-width: 2000px; margin: -52px auto 40px; padding: 0 28px; }
+/* Tam ekran (F): üst bant gizlenir, modül ekranın tamamını kullanır; tablolar kazanılan yüksekliği alır */
+body.fullscreen .topbar { display: none; }
+body.fullscreen { --gain: 150px; }            /* kazanılan üst bant yüksekliği: 100vh'ye bağlı kutular bu kadar uzar */
+body.fullscreen main { max-width: none; margin: 0; padding: 14px 16px; }
+body.fullscreen .lp { height: calc(100vh - 28px); top: 14px; }
 .stack { display: grid; gap: 16px; }
 .card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); }
 .card-h { padding: 14px 20px 0; font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--section); }
@@ -226,12 +231,24 @@ label.chk { display: inline-flex; align-items: center; gap: 8px; cursor: pointer
 .tile .n { font-size: 26px; font-weight: 600; line-height: 1.15; }
 .tile .l { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--section); }
 .tile.ok .n { color: var(--ok-text); } .tile.warn .n { color: var(--warn-text); } .tile.err .n { color: var(--error-text); }
+/* Kart içinde ince özet hapı (Ping Kontrol tarama kartı; WPF StatPill) */
+.spills { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.spill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 12px; border-radius: 10px; cursor: pointer;
+  background: var(--subtle); border: 1.5px solid var(--border); color: var(--text); font: inherit; }
+.spill:hover { border-color: var(--border-strong); }
+.spill[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-subtle); }
+.spill .l { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--section); }
+.spill b { font-size: 15px; margin-left: 3px; }
+.spill i { width: 8px; height: 8px; border-radius: 50%; }
+.spill.ok i { background: var(--ok); } .spill.ok b { color: var(--ok-text); }
+.spill.warn i { background: var(--warn); } .spill.warn b { color: var(--warn-text); }
+.spill.err i { background: var(--error); } .spill.err b { color: var(--error-text); }
 
 .progress { height: 6px; border-radius: 99px; background: var(--track); overflow: hidden; }
 .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 
 /* Tablo */
-.table-wrap { overflow: auto; max-height: calc(100vh - 260px); min-height: 200px; border-radius: 0 0 var(--radius) var(--radius); }
+.table-wrap { overflow: auto; max-height: calc(100vh - 260px + var(--gain, 0px)); min-height: 200px; border-radius: 0 0 var(--radius) var(--radius); }
 table { width: 100%; border-collapse: separate; border-spacing: 0; }
 th {
   position: sticky; top: 0; z-index: 2; background: var(--subtle); text-align: left; white-space: nowrap;
@@ -277,12 +294,16 @@ table.fixed td .badge { max-width: 100%; overflow: hidden; text-overflow: ellips
 .seg button:hover { background: var(--hover); }
 .seg button[aria-selected="true"] { background: var(--accent-subtle); color: var(--accent-text); }
 .seg svg { width: 15px; height: 15px; }
+/* Kart başlığındaki küçük sekme grubu (YBDB) */
+.seg.mini { box-shadow: none; border: 1px solid var(--border); padding: 3px; border-radius: 10px; }
+.seg.mini button { padding: 4px 12px; font-size: 12.5px; text-transform: none; letter-spacing: 0; border-radius: 7px; }
+.seg.mini svg { width: 13px; height: 13px; }
 
 .upd-grid { display: grid; grid-template-columns: minmax(0, 1fr) 440px; gap: 16px; align-items: start; }
 .upd-single { display: grid; grid-template-columns: 480px minmax(0, 1fr); gap: 16px; align-items: start; }
 @media (max-width: 1150px) { .upd-grid, .upd-single { grid-template-columns: minmax(0, 1fr); } }
 
-.opts-scroll { overflow: auto; max-height: calc(100vh - 360px); min-height: 260px; padding-right: 4px; margin-right: -4px; display: grid; gap: 14px; align-content: start; }
+.opts-scroll { overflow: auto; max-height: calc(100vh - 360px + var(--gain, 0px)); min-height: 260px; padding-right: 4px; margin-right: -4px; display: grid; gap: 14px; align-content: start; }
 .optgrid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
 .opt { display: flex; align-items: center; gap: 4px; margin: 0 0 10px; min-width: 0; }
 .opt label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; min-width: 0; }
@@ -437,11 +458,13 @@ tr.item.off td { opacity: .6; }
 .lp-add input { flex: 1; height: 28px; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; }
 .txt-ok { color: var(--ok-text); }
 
-/* ── TCP Dinleyici ────────────────────────────────────────────── */
+/* ── TCP (dinleyici / istemci) ───────────────────────────────── */
 .tcp-state { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--text-muted); }
 .tcp-state i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
 .tcp-state.on { color: var(--ok-text); } .tcp-state.on i { background: var(--ok); }
-.tcp-con { height: calc(100vh - 470px); min-height: 320px; overflow: auto; padding: 10px 14px; border-radius: 8px;
+.tcp-info { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--text-muted);
+  color: var(--text-muted); font: italic 700 11px Georgia, serif; cursor: help; margin-right: 6px; }
+.tcp-con { height: calc(100vh - 470px + var(--gain, 0px)); min-height: 320px; overflow: auto; padding: 10px 14px; border-radius: 8px;
   background: #0C0C0C; color: #CCCCCC; font: 12.5px/1.5 Consolas, "Cascadia Mono", monospace; }
 .tcp-con .tl { margin-bottom: 3px; white-space: pre-wrap; word-break: break-all; }
 .tcp-con .t { color: #5F6B7A; margin-right: 14px; user-select: none; }
@@ -453,6 +476,33 @@ tr.item.off td { opacity: .6; }
 .tcp-con .error .h { color: #FF7B72; }
 .tcp-con .b { color: #CCCCCC; margin-top: 2px; }
 .tcp-empty { color: #5F6B7A; padding: 8px 10px; font-family: "Segoe UI", system-ui, sans-serif; }
+/* Cihazlar | gelen veri | (JSON görünümünde) JSON */
+.tcp-grid { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 16px; align-items: start; }
+.tcp-grid.json { grid-template-columns: 270px minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 1250px) { .tcp-grid, .tcp-grid.json { grid-template-columns: minmax(0, 1fr); } }
+.tcp-grid > * { min-width: 0; }
+.tcp-devlist { max-height: calc(100vh - 550px + var(--gain, 0px)); min-height: 160px; overflow: auto; display: grid; gap: 2px; align-content: start; }
+.tcp-devrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid transparent; cursor: pointer; }
+.tcp-devrow:hover { background: var(--hover); }
+.tcp-devrow[aria-selected="true"] { background: var(--accent-subtle); border-color: var(--accent); }
+.tcp-devrow .b { font-weight: 600; }
+.tcp-devtxt { flex: 1; min-width: 0; }
+.tcp-devtxt .sm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tcp-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.tcp-dot.connected { background: var(--ok); } .tcp-dot.failed { background: var(--error); }
+.tcp-devrow .tcp-rm { opacity: .55; font-size: 12px; }
+.tcp-devrow:hover .tcp-rm { opacity: 1; }
+.tcp-devrow .badge { background: var(--subtle, var(--hover)); color: var(--text-2); font-size: 11px; font-weight: 500; }
+.tcp-filter { color: var(--accent-text); font-weight: 600; letter-spacing: 0; text-transform: none; }
+.tcp-json .tj { border-bottom: 1px solid #30363D; padding: 4px 0 8px; margin-bottom: 6px; }
+.tcp-json .tjh { display: flex; align-items: center; gap: 0; white-space: nowrap; }
+.tcp-json .tjh .h { color: #5F6B7A; flex: 1; }
+.tcp-json .tjh .copy-ip { opacity: .6; color: #8B949E; }
+.tcp-json .tjh .copy-ip:hover { opacity: 1; background: #21262D; }
+.tcp-json .jb { white-space: pre-wrap; word-break: break-word; color: #E6EDF3; margin-top: 4px; }
+.tcp-json .jb.bad { color: #8B949E; }
+.tcp-json .je { color: #FF7B72; margin-top: 4px; }
 
 /* ── Ek temalar (WPF: Themes/Ocean.xaml, Emerald.xaml, Graphite.xaml ile aynı renkler) ── */
 :root[data-theme="ocean"] {

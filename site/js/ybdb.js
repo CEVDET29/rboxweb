@@ -45,7 +45,13 @@ export function createYbdb() {
 
   root.innerHTML = `
     <section class="card">
-      <div class="card-h">Bağlantı</div>
+      <div class="card-h row" style="justify-content:space-between">Bağlantı
+        <!-- Alt sekmeler: odalar / yataklar (salt okunur) ve Cihaz tablosu (düzenlenebilir) -->
+        <div class="seg mini" role="tablist" id="ySeg">
+          <button role="tab" data-ytab="oda" aria-selected="true">${ICONS.ybdb} Odalar ve yataklar</button>
+          <button role="tab" data-ytab="cihaz" aria-selected="false">${ICONS.control} Cihazlar</button>
+        </div>
+      </div>
       <div class="card-b">
         <div class="row" style="align-items:flex-end">
           <div><label class="field-label" for="yServer">Sunucu</label><input type="text" id="yServer" style="width:220px" autocomplete="off"></div>
@@ -61,11 +67,6 @@ export function createYbdb() {
         <div class="txt-error" id="yErr" style="margin-top:8px" hidden></div>
       </div>
     </section>
-
-    <div class="seg" role="tablist" id="ySeg">
-      <button role="tab" data-ytab="oda" aria-selected="true">${ICONS.ybdb} Odalar ve yataklar</button>
-      <button role="tab" data-ytab="cihaz" aria-selected="false">${ICONS.control} Cihazlar</button>
-    </div>
 
     <div class="stack" id="yOdaView">
     <section class="card" id="ySummary" hidden>
@@ -89,7 +90,7 @@ export function createYbdb() {
       <section class="card">
         <div class="card-h row" style="justify-content:space-between">ODALAR <span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="yOdaCount">Bağlandıktan sonra listelenir</span></div>
         <div class="card-b" style="padding-bottom:8px"><input type="search" id="yOdaSearch" placeholder="Oda ara: ad, bölüm, ID…" style="width:100%"></div>
-        <div class="table-wrap" style="max-height:calc(100vh - 380px)"><table class="fixed" style="min-width:420px">
+        <div class="table-wrap" style="max-height:calc(100vh - 380px + var(--gain, 0px))"><table class="fixed" style="min-width:420px">
           <colgroup><col style="width:56px"><col><col style="width:110px"><col style="width:150px"></colgroup>
           <thead><tr id="yOdaHead"></tr></thead><tbody id="yOdaBody"></tbody></table></div>
       </section>
@@ -102,7 +103,7 @@ export function createYbdb() {
           <input type="search" id="yYatakSearch" placeholder="Yatak ara: hasta, yatak, oda…  (Ctrl+F)" style="width:340px;max-width:100%">
           <label class="chk"><input type="checkbox" id="yBosOnly"> Sadece boş yataklar</label>
         </div>
-        <div class="table-wrap" style="max-height:calc(100vh - 380px)"><table class="fixed" style="min-width:900px">
+        <div class="table-wrap" style="max-height:calc(100vh - 380px + var(--gain, 0px))"><table class="fixed" style="min-width:900px">
           <colgroup><col style="width:70px"><col><col style="width:80px"><col style="width:80px"><col style="width:80px"><col style="width:135px"><col style="width:100px"><col style="width:80px"></colgroup>
           <thead><tr id="yYatakHead"></tr></thead><tbody id="yYatakBody"></tbody></table></div>
       </section>
