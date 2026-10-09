@@ -139,6 +139,37 @@ export function ipFilter(input, kind = "ip") {
 export const UNIT_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6", "#EF4444", "#84CC16"];
 export const unitColor = (i) => (i < 0 ? "transparent" : UNIT_COLORS[i % UNIT_COLORS.length]);
 
+// ── Ortak sıralama (WPF Common/GridSort.cs ile aynı kural) ─────────────
+const IP_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+const MAC_RE = /^[0-9a-f]{2}([:-][0-9a-f]{2}){5}$/i;
+const isEmptyVal = (v) => v == null || (typeof v === "number" ? Number.isNaN(v) : String(v).trim() === "");
+function ipNum(s) {
+  const m = IP_RE.exec(s); if (!m) return null;
+  const o = m.slice(1).map(Number);
+  return o.every((x) => x <= 255) ? ((o[0] * 256 + o[1]) * 256 + o[2]) * 256 + o[3] : null;
+}
+
+/**
+ * Tablo sıralaması: sayılar sayısal ("9" < "12"), IPv4 oktet oktet, MAC onaltılık, metinler Türkçe ve içindeki
+ * sayılar sayısal ("Yatak 2" < "Yatak 10"); boş değerler her iki yönde de sonda. dir: 1 artan, -1 azalan.
+ */
+export function sortCompare(a, b, dir = 1) {
+  const ea = isEmptyVal(a), eb = isEmptyVal(b);
+  if (ea || eb) return ea && eb ? 0 : ea ? 1 : -1;
+  if (typeof a === "boolean" && typeof b === "boolean") return (a - b) * dir;
+  const na = typeof a === "number" ? a : /^\s*-?\d+(\.\d+)?\s*$/.test(a) ? Number(a) : null;
+  const nb = typeof b === "number" ? b : /^\s*-?\d+(\.\d+)?\s*$/.test(b) ? Number(b) : null;
+  if (na != null && nb != null) return (na - nb) * dir;
+  const sa = String(a).trim(), sb = String(b).trim();
+  const ia = ipNum(sa), ib = ipNum(sb);
+  if (ia != null && ib != null) return (ia - ib) * dir;
+  if (MAC_RE.test(sa) && MAC_RE.test(sb)) {
+    const ka = sa.replace(/[:-]/g, "").toUpperCase(), kb = sb.replace(/[:-]/g, "").toUpperCase();
+    return (ka < kb ? -1 : ka > kb ? 1 : 0) * dir;
+  }
+  return sa.localeCompare(sb, "tr", { numeric: true, sensitivity: "base" }) * dir;
+}
+
 export const ICONS = {
   ping: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg>',
   update: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',

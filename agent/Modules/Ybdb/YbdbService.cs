@@ -31,6 +31,8 @@ namespace RboxAgent.Modules.Ybdb
         /// <summary>Bağlıyken Cihaz tablosu düzenleyicisi (aynı bağlantı).</summary>
         public static CihazRepository? Cihazlar => _repo == null ? null : new CihazRepository(_repo.ConnectionString);
         public static string ConnectedServer => _server;
+        /// <summary>Cihaz Kontrol'ün Hasta sekmesi aynı bağlantıyla okur (bağlı değilse null).</summary>
+        public static string? ConnectionString => _repo?.ConnectionString;
 
         /// <summary>Bu PC'nin IPv4 adresi: önce Wi-Fi, yoksa Ethernet (WPF sürümündeki varsayılan sunucu).</summary>
         public static string? PreferredIPv4() =>

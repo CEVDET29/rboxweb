@@ -1,14 +1,14 @@
 // Ping Kontrol modülü: Excel'deki cihazlara ping, SSH portu ve MAC kontrolü (WPF PingView karşılığı).
 import { api, stream } from "./api.js";
-import { $, $$, esc, debounce, toast, copyText, downloadCsv, ICONS } from "./util.js";
+import { $, $$, esc, debounce, toast, copyText, downloadCsv, sortCompare, ICONS } from "./util.js";
 
 const ROOM_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6", "#EF4444", "#84CC16"];
 const DASH = "—";
 
 const COLUMNS = [
-  { key: "yatak", label: "Yatak", sort: (r) => r.yatak.toLowerCase() },
-  { key: "yatakId", label: "Yatak ID", sort: (r) => numOrText(r.yatakId) },
-  { key: "ip", label: "IP", sort: (r) => r.ipSort },
+  { key: "yatak", label: "Yatak", sort: (r) => r.yatak },
+  { key: "yatakId", label: "Yatak ID", sort: (r) => r.yatakId },
+  { key: "ip", label: "IP", sort: (r) => r.ip },
   { key: "mac", label: "MAC (Excel)", sort: (r) => r.mac },
   { key: "ping", label: "Ping", sort: (r) => (r.res ? r.res.pingSort : Number.MAX_SAFE_INTEGER) },
   { key: "ssh", label: "SSH", sort: (r) => cell(r, "ssh").text },
@@ -24,11 +24,6 @@ const FILTERS = [
   { id: "mismatch", label: "MAC uyuşmuyor", cls: "err" },
   { id: "problems", label: "Sorunlu", cls: "err" },
 ];
-
-function numOrText(v) {
-  const n = Number(v);
-  return v !== "" && Number.isFinite(n) ? n : String(v).toLowerCase();
-}
 
 /** Satırın ekranda görünen hücresi (durum: bekliyor / çalışıyor / iptal / sonuç). */
 function cell(r, col) {
@@ -303,9 +298,7 @@ export function createPing(ctx) {
     list.sort((a, b) => {
       if (a.room !== b.room) return a.room - b.room;          // gruplar Excel sırasında kalır
       if (!col) return a.id - b.id;
-      const x = col.sort(a), y = col.sort(b);
-      const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "tr", { numeric: true });
-      return c * sort.dir || a.id - b.id;
+      return sortCompare(col.sort(a), col.sort(b), sort.dir) || a.id - b.id;
     });
     return list;
   }

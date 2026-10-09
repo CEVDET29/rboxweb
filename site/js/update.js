@@ -1,7 +1,7 @@
 // Cihaz Güncelleme modülü: SSH ile toplu güncelleme, versiyon kontrolü, TTY mesajı ve tek cihaz ayarları.
 // WPF UpdateView / UpdateViewModel karşılığı. Adımların kendisi ajandadadır (UpdateCoordinator, WPF ile aynı kod).
 import { api, stream } from "./api.js";
-import { $, $$, esc, debounce, toast, copyText, ipFilter, ICONS } from "./util.js";
+import { $, $$, esc, debounce, toast, copyText, ipFilter, sortCompare, ICONS } from "./util.js";
 
 const DASH = "—";
 
@@ -43,9 +43,9 @@ const CONSPY_TIP = "conspy: başka bir tty'yi izlemeye yarayan araç.\n\napt-get
 const AUTOLOGIN_TIP = "tty1 konsolunda otomatik giriş.\nDisable: /etc/systemd/system/getty@tty1.service.d/autologin.conf silinir,\ndaemon-reload + getty@tty1 restart uygulanır (reboot gerekmez).\nEnable: autologin.conf yeniden oluşturulur.";
 
 const COLUMNS = [
-  { key: "ip", label: "IP", val: (r) => r.ipSort },
-  { key: "yatakAdi", label: "Yatak adı", val: (r) => r.yatakAdi.toLowerCase() },
-  { key: "yatakId", label: "Yatak ID", val: (r) => (r.yatakId === "" ? Number.MAX_SAFE_INTEGER : Number(r.yatakId)) },
+  { key: "ip", label: "IP", val: (r) => r.ip },
+  { key: "yatakAdi", label: "Yatak adı", val: (r) => r.yatakAdi },
+  { key: "yatakId", label: "Yatak ID", val: (r) => r.yatakId },
   { key: "status", label: "Durum", val: (r) => r.status },
   { key: "version", label: "Versiyon", val: (r) => r.version },
   { key: "wlan0", label: "wlan0", val: (r) => r.wlan0 },
@@ -512,9 +512,7 @@ export function createUpdate(ctx) {
     return [...rows].sort((a, b) => {
       if (a.room !== b.room) return a.room - b.room;
       if (!col) return a.id - b.id;
-      const x = col.val(a), y = col.val(b);
-      const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "tr", { numeric: true });
-      return c * sort.dir || a.id - b.id;
+      return sortCompare(col.val(a), col.val(b), sort.dir) || a.id - b.id;
     });
   }
 

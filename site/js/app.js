@@ -307,7 +307,9 @@ const anyBusy = () => Object.values(views).some((v) => v.isBusy?.());
 
 /** Listeyi, setDevices'ı olan tüm modüllere dağıtır. Modül sonradan oluşturulunca da çağrılır. */
 function distributeDevices() {
-  for (const v of Object.values(views)) v.setDevices?.(devices);
+  // IP'siz satırlar (RasyoBOX'sız yataklar) yalnızca Cihaz Kontrol'e ve YBDB'nin Excel vurgusuna gider
+  const withIp = { ...devices, rows: devices.rows.filter((r) => String(r.ip || "").trim()) };
+  for (const [id, v] of Object.entries(views)) v.setDevices?.(id === "control" || id === "ybdb" ? devices : withIp);
 }
 
 async function loadDeviceFile(file) {
@@ -318,7 +320,8 @@ async function loadDeviceFile(file) {
     devices.rows = res.rows; devices.fileName = res.fileName;
     distributeDevices();
     renderListButton();
-    toast(`${res.rows.length} cihaz yüklendi`);
+    const beds = res.rows.filter((r) => !String(r.ip || "").trim()).length;
+    toast(`${res.rows.length - beds} cihaz yüklendi${beds ? ` · ${beds} RasyoBOX'sız yatak` : ""}`);
   } catch (e) {
     toast("Excel okunamadı: " + e.message, 5000);
   }

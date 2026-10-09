@@ -1,14 +1,20 @@
 // Port Kontrol modülü: ajanın çalıştığı bilgisayarda bir portu dinleyen uygulamayı / bir uygulamanın dinlediği
 // portları bulur. (Uzak bilgisayar sorgusu arayüzden kaldırıldı; ajandaki kod duruyor.)
 // Tüm iş ajandaki PortInspector'da (WPF ile aynı kod); burası yalnızca sonucu gösterir. Salt okunur.
+// "Güvenlik duvarı · port izni" kartı ajandaki FirewallManager'ı kullanır: seçili TCP portları için
+// "RasyoBOX TCP <port>" gelen izin kuralı ekler / kaldırır (ajan yönetici değilse Windows UAC sorar).
 import { api } from "./api.js";
-import { $, esc, storeGet, storeSet, toast, ICONS } from "./util.js";
+import { $, esc, storeGet, storeSet, toast, sortCompare, ICONS } from "./util.js";
 
 const DASH = "—";
 const QUICK = [
   ["", "Tüm dinlenen portlar"], ["1433", "SQL Server 1433"], ["sqlservr.exe", "sqlservr.exe"], ["22", "SSH 22"],
   ["3389", "RDP 3389"], ["7070", "AnyDesk 7070"], ["2575", "HL7 2575"], ["47800-47809", "Ajan 47800"],
 ];
+
+// Güvenlik duvarı kartında her zaman gösterilen portlar (ajandaki FirewallManager.DefaultPorts ile aynı)
+const FW_DEFAULT = [1433, 22, 8080, 8082, 8085, 6155, 8089, 9000, 9999, 9998, 9997];
+const FW_SEV = { allowed: "sev-ok", blocked: "sev-error", partial: "sev-warn", none: "sev-warn" };
 
 const EP_COLS = [
   { key: "protocol", label: "Protokol", w: 82 },
@@ -36,6 +42,7 @@ export function createPort() {
     .filter((h) => h && !h.split("\t")[1]).map((h) => h.split("\t")[0]);
 
   root.innerHTML = `
+    <div class="ptop">
     <section class="card">
       <div class="card-h">Sorgu</div>
       <div class="card-b">
@@ -52,6 +59,23 @@ export function createPort() {
           Uygulama adı girilirse (ör. sqlservr.exe) o uygulamanın dinlediği portlar gösterilir.</p>
       </div>
     </section>
+    <section class="card">
+      <div class="card-h row" style="justify-content:space-between"><span>Güvenlik duvarı · port izni</span><span class="sm muted" id="fwState" style="text-transform:none;letter-spacing:0;font-weight:400"></span></div>
+      <div class="card-b">
+        <div class="fwgrid" id="fwPorts"></div>
+        <div class="row tight" style="margin-top:12px">
+          <label class="row tight" style="cursor:pointer"><input type="checkbox" id="fwAll"><span class="sm">Tümü</span></label>
+          <input type="text" id="fwAdd" placeholder="Port ekle" title="Listeye port ekle (1–65535), Enter" style="width:110px" inputmode="numeric" autocomplete="off" maxlength="5">
+          <button class="btn icon" id="fwAddBtn" title="Portu listeye ekle">${ICONS.plus}</button>
+          <span class="spacer"></span>
+          <button class="btn icon" id="fwRefresh" title="Durumu yenile">${ICONS.redo}</button>
+          <button class="btn" id="fwRemove" title="Seçili portların yalnızca 'RasyoBOX TCP &lt;port&gt;' kuralını siler">${ICONS.trash} Kuralı kaldır</button>
+          <button class="btn primary" id="fwAllow">${ICONS.check} <span id="fwAllowTxt">İzin ver</span></button>
+        </div>
+        <p class="sm muted" id="fwNote" style="margin:10px 0 0"></p>
+      </div>
+    </section>
+    </div>
     <div id="pOut" class="stack pstack"></div>`;
 
   const q = (id) => $("#" + id, root);
@@ -235,7 +259,7 @@ export function createPort() {
     if (t) list = list.filter((e) => EP_COLS.some((c) => String(e[c.key] ?? "").toLocaleLowerCase("tr").includes(t)) || (STATE_TR[e.state] ?? "").toLocaleLowerCase("tr").includes(t));
     if (epSort.key) {
       const c = EP_COLS.find((x) => x.key === epSort.key);
-      list = [...list].sort((a, b) => (c.num ? a[c.key] - b[c.key] : String(a[c.key]).localeCompare(String(b[c.key]), "tr", { numeric: true })) * epSort.dir);
+      list = [...list].sort((a, b) => sortCompare(c.num && !a[c.key] ? "" : a[c.key], c.num && !b[c.key] ? "" : b[c.key], epSort.dir));
     }
     $("#pEpCount", el.out).textContent = t ? `${list.length} / ${report.endpoints.length}` : String(report.endpoints.length);
     body.innerHTML = list.length ? list.map((e) => {
@@ -252,9 +276,131 @@ export function createPort() {
     }).join("") : `<tr><td colspan="${EP_COLS.length}" class="empty">${report.endpoints.length ? "Süzgece uyan satır yok." : "Bu sorguya uyan port ya da bağlantı yok."}</td></tr>`;
   }
 
+  // ── Güvenlik duvarı · port izni ─────────────────────────────
+  const fw = { ports: q("fwPorts"), all: q("fwAll"), add: q("fwAdd"), addBtn: q("fwAddBtn"), refresh: q("fwRefresh"),
+               remove: q("fwRemove"), allow: q("fwAllow"), allowTxt: q("fwAllowTxt"), state: q("fwState"), note: q("fwNote") };
+  let fwCustom = storeGet("rbox.fw.ports", "").split(",").map(Number).filter((p) => p > 0 && p <= 65535 && !FW_DEFAULT.includes(p));
+  let fwStatus = null, fwBusy = false, fwLoaded = false;
+  const fwOff = new Set();                       // seçili olmayan portlar (varsayılan: hepsi seçili)
+  const fwList = () => [...FW_DEFAULT, ...fwCustom];
+  const fwChecked = () => fwList().filter((p) => !fwOff.has(p));
+
+  function fwRender() {
+    const byPort = new Map((fwStatus?.ports ?? []).map((x) => [x.port, x]));
+    fw.ports.innerHTML = fwList().map((p) => {
+      const s = byPort.get(p);
+      const custom = !FW_DEFAULT.includes(p);
+      const badge = s ? `<span class="badge ${FW_SEV[s.state] ?? "sev-muted"}">${esc(s.label)}</span>` : `<span class="badge sev-muted">…</span>`;
+      return `<label class="fwt${fwOff.has(p) ? " off" : ""}" title="${esc(s ? s.tooltip : "")}">
+        <input type="checkbox" data-p="${p}"${fwOff.has(p) ? "" : " checked"}>
+        <span class="fwp"><b class="mono">${p}</b><small>${esc(s?.service || "TCP")}${s?.own ? " · RasyoBOX" : ""}</small></span>
+        ${badge}${custom ? `<button class="fwx" data-x="${p}" title="Listeden çıkar (kurala dokunmaz)">×</button>` : ""}
+      </label>`;
+    }).join("");
+    const n = fwChecked().length, all = fwList().length;
+    fw.all.checked = n === all; fw.all.indeterminate = n > 0 && n < all;
+    fw.allowTxt.textContent = n === all ? "İzin ver" : `İzin ver (${n})`;
+    fw.allow.disabled = fw.remove.disabled = fwBusy || n === 0;
+    fw.refresh.disabled = fwBusy;
+    if (fwStatus) {
+      fw.state.textContent = fwStatus.error ? "" : fwStatus.profiles;
+      fw.state.className = fwStatus.activeProfileOff ? "sm txt-error" : "sm muted";
+    }
+  }
+
+  function fwSetNote(text, cls = "muted") { fw.note.className = "sm " + cls; fw.note.textContent = text; }
+  function fwDefaultNote() {
+    if (!fwStatus) return;
+    if (fwStatus.error) return fwSetNote(fwStatus.error, "txt-error");
+    const base = "Seçili portlar için tüm ağ profillerinde gelen TCP bağlantısına izin veren 'RasyoBOX TCP <port>' kuralı eklenir.";
+    fwSetNote(fwStatus.activeProfileOff ? "Etkin ağda güvenlik duvarı KAPALI: portlar şu an engellenmiyor. " + base
+      : fwStatus.isAdmin ? base : base + " Ajan yönetici olarak çalışmadığı için Windows yönetici izni (UAC) soracak.",
+      fwStatus.activeProfileOff ? "txt-error" : "muted");
+  }
+
+  async function fwLoad() {
+    if (fwBusy) return;
+    fwBusy = true; fwRender();
+    try {
+      fwStatus = await api("/api/firewall/status", { method: "POST", body: { ports: fwList() } });
+      fwLoaded = true;
+      fwDefaultNote();
+    } catch (e) {
+      fwSetNote(e.message, "txt-error");
+    } finally {
+      fwBusy = false; fwRender();
+    }
+  }
+
+  async function fwAct(kind) {
+    const ports = fwChecked();
+    if (fwBusy || !ports.length) return;
+    if (kind === "remove" && !confirm(`${ports.length} port için 'RasyoBOX TCP <port>' kuralı silinsin mi?\n\n${ports.join(", ")}\n\nBaşka kurallara dokunulmaz.`)) return;
+    fwBusy = true; fwRender();
+    fwSetNote(fwStatus && !fwStatus.isAdmin
+      ? "Windows yönetici izni bekleniyor… UAC penceresi görünmüyorsa görev çubuğunda yanıp sönen kalkan simgesine tıklayın."
+      : "Güvenlik duvarı güncelleniyor…");
+    try {
+      const r = await api("/api/firewall/" + kind, { method: "POST", body: { ports } });
+      if (r.status) {
+        // Yanıt yalnızca seçili portları içerir: diğer portların durumu korunur
+        const map = new Map((fwStatus?.ports ?? []).map((x) => [x.port, x]));
+        r.status.ports.forEach((x) => map.set(x.port, x));
+        fwStatus = { ...r.status, ports: [...map.values()] };
+      }
+      fwSetNote(r.message, r.ok ? "txt-ok" : "txt-error");
+      toast(r.message, 4000);
+    } catch (e) {
+      fwSetNote(e.message, "txt-error");
+    } finally {
+      fwBusy = false; fwRender();
+    }
+  }
+
+  function fwAddPort() {
+    const p = Number(fw.add.value.trim());
+    if (!Number.isInteger(p) || p < 1 || p > 65535) { toast("Port 1–65535 arasında olmalı."); return; }
+    fw.add.value = "";
+    fwOff.delete(p);
+    if (!fwList().includes(p)) {
+      fwCustom.push(p);
+      storeSet("rbox.fw.ports", fwCustom.join(","));
+      if (fwLoaded) fwLoad();
+    }
+    fwRender();
+  }
+
+  fw.ports.addEventListener("click", (e) => {
+    const x = e.target.closest("[data-x]");
+    if (!x) return;
+    e.preventDefault();
+    const p = Number(x.dataset.x);
+    fwCustom = fwCustom.filter((v) => v !== p); fwOff.delete(p);
+    storeSet("rbox.fw.ports", fwCustom.join(","));
+    fwRender();
+  });
+  fw.ports.addEventListener("change", (e) => {
+    const cb = e.target.closest("input[data-p]"); if (!cb) return;
+    const p = Number(cb.dataset.p);
+    cb.checked ? fwOff.delete(p) : fwOff.add(p);
+    fwRender();
+  });
+  fw.all.addEventListener("change", () => {
+    // Karışık durumda tıklama hepsini seçer (Ping tablosundaki gibi)
+    if (fwChecked().length === fwList().length) fwList().forEach((p) => fwOff.add(p)); else fwOff.clear();
+    fwRender();
+  });
+  fw.add.addEventListener("beforeinput", (e) => { if (e.data && /\D/.test(e.data)) e.preventDefault(); });
+  fw.add.addEventListener("keydown", (e) => { if (e.key === "Enter") fwAddPort(); });
+  fw.addBtn.addEventListener("click", fwAddPort);
+  fw.refresh.addEventListener("click", fwLoad);
+  fw.allow.addEventListener("click", () => fwAct("allow"));
+  fw.remove.addEventListener("click", () => fwAct("remove"));
+  fwRender();
+
   return {
     root,
-    onShow() { if (!report) el.query.focus(); },
+    onShow() { if (!report) el.query.focus(); if (!fwLoaded) fwLoad(); },
     isBusy: () => busy,
   };
 }

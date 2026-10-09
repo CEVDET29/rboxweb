@@ -110,7 +110,7 @@ async function raw(path, { method = "GET", body, headers = {}, signal } = {}) {
 export async function api(path, opts) {
   const res = await raw(path, opts);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Hata ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `Hata ${res.status}`), { status: res.status });
   return data;
 }
 

@@ -1,7 +1,7 @@
 // YBDB Odalar → "Cihazlar" sekmesi: dbo.Cihaz'da ekle / güncelle / sil + toplu ekle (yalnızca Id, Adi, CTS, IP, Port, YatakId).
 // Yazma ajandaki CihazRepository'de (WPF ile aynı kod). Düzen WPF ile aynı: solda form, ortada tablo, sağda toplu ekle.
 import { api } from "./api.js";
-import { $, $$, esc, toast, ipFilter, ICONS } from "./util.js";
+import { $, $$, esc, toast, ipFilter, sortCompare, ICONS } from "./util.js";
 
 const DASH = "—";
 const COLS = [
@@ -185,10 +185,7 @@ export function createCihazEditor({ getYataklar }) {
     let v = list.filter((k) => (showDeleted || !k.silinmis) &&
       (!s || [k.id, k.adi, k.cts, k.ip, k.port, k.yatakId, ym.get(String(k.yatakId))?.yatakAdi, ym.get(String(k.yatakId))?.odaAdi].some((x) => tr(x).includes(s))));
     const c = COLS.find((x) => x.key === sort.key);
-    if (c) v = [...v].sort((a, b) => {
-      const x = a[c.key], y = b[c.key];
-      return (c.num ? (x ?? -Infinity) - (y ?? -Infinity) : String(x ?? "").localeCompare(String(y ?? ""), "tr", { numeric: true })) * sort.dir;
-    });
+    if (c) v = [...v].sort((a, b) => sortCompare(a[c.key], b[c.key], sort.dir) || a.id - b.id);
     return v;
   }
 

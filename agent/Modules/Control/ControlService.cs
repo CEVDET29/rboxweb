@@ -12,6 +12,13 @@ namespace RboxAgent.Modules.Control
         public List<CtlTarget> Targets { get; set; } = new();
     }
 
+    /// <summary>Hasta sekmesi "Daha eskisini ara": HBSinyal ya da SolunumSinyal, aktif hasta.</summary>
+    public sealed class CtlOlderRequest
+    {
+        public string Table { get; set; } = "";
+        public int HastaId { get; set; }
+    }
+
     public sealed class CtlExecRequest
     {
         /// <summary>restartSw | reboot | expand (komutlar burada sabittir; istemci komut gönderemez).</summary>

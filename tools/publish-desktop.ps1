@@ -1,5 +1,6 @@
-﻿# Masaustu (WPF) surumunu Release olarak derler ve dist\RboxTools-desktop.zip uretir.
-# Zip'i GitHub'da "desktop" etiketli release'e yukleyin (bkz. README): install-desktop.ps1 oradan indirir.
+﻿# Masaustu (WPF) surumunu Release olarak derler ve dist\RboxTools-desktop-<surum>.zip uretir (or. -1.21.0).
+# Zip'i GitHub'da "desktop" etiketli release'e yukleyin (bkz. README): install-desktop.ps1 oradaki en yuksek
+# surumlu zip'i indirir.
 #   .\publish-desktop.ps1
 $ErrorActionPreference = 'Stop'
 $web  = Split-Path $PSScriptRoot -Parent                                   # ...\RboxWeb
@@ -31,19 +32,26 @@ if (Test-Path -LiteralPath $uf) {
     Write-Host "updateFiles eklendi ($n dosya)" -ForegroundColor Yellow
 }
 
-$zip = Join-Path $web 'dist\RboxTools-desktop.zip'
-if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+# Zip adinda surum: RboxTools-desktop-1.21.0.zip (csproj'daki <Version>; dosya surumunun 4. hanesi atilir)
+$fv = [version](Get-Item -LiteralPath (Join-Path $out "RasyoBOX Araclari.exe")).VersionInfo.FileVersion
+$ver = "$($fv.Major).$($fv.Minor).$([math]::Max(0, $fv.Build))"
+$name = "RboxTools-desktop-$ver.zip"
+
+# Eski zip'ler (surumsuz ya da baska surumlu) karismasin diye silinir
+$pubDir = Join-Path $web 'dist\public'
+New-Item -ItemType Directory -Force $pubDir | Out-Null
+foreach ($d in (Join-Path $web 'dist'), $pubDir) {
+    Get-ChildItem -LiteralPath $d -File -Filter 'RboxTools-desktop*.zip' | Remove-Item -Force
+}
+
+$zip = Join-Path $web "dist\$name"
 Compress-Archive -Path (Join-Path $out '*') -DestinationPath $zip
 $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
-$ver = (Get-Item -LiteralPath (Join-Path $out "RasyoBOX Araclari.exe")).VersionInfo.FileVersion
 Write-Host "Hazir: $zip ($mb MB)"
 Write-Host "Surum: $ver"
 
-# Herkese acik release icin updateFiles'siz kopya (ayni ad: install-desktop.ps1 bu adi indirir)
-$pubDir = Join-Path $web 'dist\public'
-New-Item -ItemType Directory -Force $pubDir | Out-Null
-$pub = Join-Path $pubDir 'RboxTools-desktop.zip'
-if (Test-Path -LiteralPath $pub) { Remove-Item -LiteralPath $pub -Force }
+# Herkese acik release icin updateFiles'siz kopya (ayni ad)
+$pub = Join-Path $pubDir $name
 Compress-Archive -Path (Get-ChildItem -LiteralPath $out | Where-Object { $_.Name -ne 'updateFiles' }).FullName -DestinationPath $pub
 $mb = [math]::Round((Get-Item $pub).Length / 1MB, 1)
 Write-Host "Hazir (updateFiles'siz): $pub ($mb MB)"

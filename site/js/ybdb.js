@@ -1,6 +1,6 @@
 // YBDB Odalar modülü: SQL Server'daki oda / yatak kayıtları ve doluluk (salt okunur). WPF YbdbView karşılığı.
 import { api } from "./api.js";
-import { $, esc, debounce, toast, unitColor, ICONS } from "./util.js";
+import { $, esc, debounce, toast, unitColor, sortCompare, ICONS } from "./util.js";
 import { createCihazEditor } from "./ybdbcihaz.js";
 
 const DASH = "—";
@@ -9,7 +9,7 @@ const ODA_COLS = [
   { key: "id", label: "ID", val: (o) => o.id, num: true },
   { key: "adi", label: "Oda", val: (o) => o.adi },
   { key: "bolumAdi", label: "Bölüm", val: (o) => o.bolumAdi },
-  { key: "doluluk", label: "Doluluk", val: (o) => (o.yatakSayisi ? o.doluSayisi / o.yatakSayisi : -1) },
+  { key: "doluluk", label: "Doluluk", val: (o) => (o.yatakSayisi ? o.doluSayisi / o.yatakSayisi : null) },
 ];
 
 const YATAK_COLS = [
@@ -25,10 +25,12 @@ const YATAK_COLS = [
 
 const tr = (s) => String(s ?? "").toLocaleLowerCase("tr");
 
-function compare(a, b, numeric) {
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  return String(a).localeCompare(String(b), "tr", { numeric });
+/** Yatak ID karşılaştırma anahtarı: Excel'de "12", " 12 " ya da "12.0" olabilir; YBDB'de sayı. */
+function yatakKey(v) {
+  const t = String(v ?? "").trim();
+  return /^\d+(\.0+)?$/.test(t) ? String(parseInt(t, 10)) : t.toLocaleLowerCase("tr");
 }
+
 
 export function createYbdb() {
   const root = document.createElement("div");
@@ -42,6 +44,7 @@ export function createYbdb() {
   let odaSearch = "", yatakSearch = "", sadeceBos = false;
   let sortOda = { key: null, dir: 1 }, sortYatak = { key: null, dir: 1 };
   let cfg = { server: "", user: "RasyoUser", remember: false, hasPass: false };
+  let excelYatak = new Set();      // ortak cihaz listesindeki (Excel) yatak ID'leri: eşleşen yataklar yeşil
 
   root.innerHTML = `
     <section class="card">
@@ -162,6 +165,7 @@ export function createYbdb() {
       connected = true;
       setState(`Bağlı · ${cfg.connectedServer}`, "ok");
       el.refresh.disabled = busy;
+      dispatchEvent(new Event("rbox:ybdb"));          // Cihaz Kontrol'ün Hasta sekmesi bu bağlantıyla okur
       if (!data) refresh();
     }
   }
@@ -184,6 +188,7 @@ export function createYbdb() {
       el.pass.value = ""; el.pass.placeholder = cfg.hasPass ? "••••••••" : "";
       setState(`Bağlı · ${r.server}`, "ok");
       cz.reset();
+      dispatchEvent(new Event("rbox:ybdb"));
       setBusy(false);
       await refresh();
     } catch (e) {
@@ -223,7 +228,7 @@ export function createYbdb() {
     const s = tr(odaSearch.trim());
     let list = data.odalar.filter((o) => !s || [o.adi, o.bolumAdi, o.id].some((v) => tr(v).includes(s)));
     const c = ODA_COLS.find((x) => x.key === sortOda.key);
-    if (c) list = [...list].sort((a, b) => compare(c.val(a), c.val(b), c.num) * sortOda.dir);
+    if (c) list = [...list].sort((a, b) => sortCompare(c.val(a), c.val(b), sortOda.dir));
     return list;
   }
 
@@ -235,7 +240,7 @@ export function createYbdb() {
       (!sadeceBos || y.hastaId == null) &&
       (!s || [y.hastaAdi, y.hastaId, y.yatakAdi, y.odaAdi, y.bolumAdi].some((v) => tr(v).includes(s))));
     const c = YATAK_COLS.find((x) => x.key === sortYatak.key);
-    if (c) list = [...list].sort((a, b) => compare(c.val(a), c.val(b), c.num) * sortYatak.dir);
+    if (c) list = [...list].sort((a, b) => sortCompare(c.val(a), c.val(b), sortYatak.dir));
     return list;
   }
 
@@ -290,10 +295,12 @@ export function createYbdb() {
 
     const list = visibleYataklar();
     const dolu = list.filter((y) => y.hastaId != null).length;
-    el.ozet.textContent = `${list.length} yatak  ·  ${dolu} dolu  ·  ${list.length - dolu} boş`;
+    const xl = list.filter((y) => excelYatak.has(yatakKey(y.yatakId))).length;
+    el.ozet.textContent = `${list.length} yatak  ·  ${dolu} dolu  ·  ${list.length - dolu} boş` + (excelYatak.size ? `  ·  ${xl} Excel'de` : "");
     el.yatakBody.innerHTML = list.length ? list.map((y) => {
       const isDolu = y.hastaId != null;
-      return `<tr class="item">
+      const inXl = excelYatak.has(yatakKey(y.yatakId));
+      return `<tr class="item${inXl ? " xl" : ""}"${inXl ? ` title="Bu yatak ID cihaz listesinde (Excel) var"` : ""}>
         <td><span class="badge ${isDolu ? "sev-info" : "sev-ok"}">${esc(y.durum)}</span></td>
         <td title="${esc(y.hastaAdi ?? "")}">${y.hastaAdi ? `<b>${esc(y.hastaAdi)}</b>` : `<span class="txt-muted">${DASH}</span>`}</td>
         <td class="mono">${esc(y.hastaId) || DASH}</td>
@@ -338,5 +345,11 @@ export function createYbdb() {
 
   renderAll();
 
-  return { root, onShow: loadSettings };
+  /** Ortak cihaz listesi değişince: Excel'deki yatak ID'leri YBDB yataklarıyla eşleşenleri vurgulamak için. */
+  function setDevices(devices) {
+    excelYatak = new Set(devices.rows.map((d) => yatakKey(d.yatakId)).filter((k) => k !== ""));
+    renderYataklar();
+  }
+
+  return { root, onShow: loadSettings, setDevices };
 }

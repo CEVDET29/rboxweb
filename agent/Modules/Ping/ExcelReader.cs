@@ -60,14 +60,17 @@ namespace RboxAgent.Modules.Ping
                     string oda = GetCell(row, idxOda);
                     if (oda.Length > 0) lastOda = oda; else oda = lastOda;
 
+                    // IP'siz satır yalnızca yatak ID'si varsa tutulur: RasyoBOX'sız yatak (Cihaz Kontrol'de "RasyoBOX yok" kartı).
+                    // Diğer modüller bu satırları almaz (sayfadaki app.js süzer).
                     string ip = GetCell(row, idxIp);
-                    if (string.IsNullOrWhiteSpace(ip)) continue;
+                    string yatakId = GetCell(row, idxYatakId);
+                    if (string.IsNullOrWhiteSpace(ip) && string.IsNullOrWhiteSpace(yatakId)) continue;
 
                     list.Add(new DeviceRow(
                         oda,
                         GetCell(row, idxYatakAdi),
-                        GetCell(row, idxYatakId),
-                        ip,
+                        yatakId,
+                        ip.Trim(),
                         GetCell(row, idxMac)));
                 }
                 return list;

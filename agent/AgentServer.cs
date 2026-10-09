@@ -212,6 +212,22 @@ namespace RboxAgent
                     return;
                 }
 
+                // ── Güvenlik duvarı port izni ─────────────────────────────────
+                case ("POST", "/api/firewall/status"):
+                {
+                    var b = await Body<FwPortsIn>(req);
+                    await Reply(res, await Task.Run(() => FirewallManager.ReadStatus(b.Ports ?? new List<int>())));
+                    return;
+                }
+                case ("POST", "/api/firewall/allow"):
+                case ("POST", "/api/firewall/remove"):
+                {
+                    var b = await Body<FwPortsIn>(req);
+                    var ports = b.Ports ?? new List<int>();
+                    await Reply(res, path.EndsWith("/allow") ? await FirewallManager.AllowAsync(ports) : await FirewallManager.RemoveAsync(ports));
+                    return;
+                }
+
                 // ── YBDB (SQL Server, salt okunur) ────────────────────────────
                 case ("GET", "/api/ybdb/settings"):
                 {
@@ -438,6 +454,28 @@ namespace RboxAgent
                 }
 
                 // ── Cihaz Kontrol ─────────────────────────────────────────────
+                // Hasta sekmesi: YBDB modülünün bağlantısıyla salt okunur (WPF PatientRepository ile aynı dosya)
+                case ("GET", "/api/control/patients"):
+                {
+                    if (YbdbService.ConnectionString is not { } cs) { await Reply(res, new { error = "YBDB'ye bağlı değil." }, 409); return; }
+                    try { await Reply(res, await new PatientRepository(cs).ReadAsync()); }
+                    catch (Exception ex) { await Reply(res, new { error = YbdbRepository.FriendlyError(ex) }, 422); }
+                    return;
+                }
+
+                case ("POST", "/api/control/patients/older"):
+                {
+                    if (YbdbService.ConnectionString is not { } cs) { await Reply(res, new { error = "YBDB'ye bağlı değil." }, 409); return; }
+                    CtlOlderRequest? o;
+                    try { o = await Body<CtlOlderRequest>(req); }
+                    catch { await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+                    if (o == null || o.Table is not ("HBSinyal" or "SolunumSinyal") || o.HastaId <= 0)
+                    { await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+                    try { await Reply(res, new { rows = await new PatientRepository(cs).ReadOlderAsync(o.Table, o.HastaId) }); }
+                    catch (Exception ex) { await Reply(res, new { error = YbdbRepository.FriendlyError(ex) }, 422); }
+                    return;
+                }
+
                 case ("POST", "/api/control/refresh"):
                 case ("POST", "/api/control/exec"):
                 {
@@ -654,6 +692,7 @@ namespace RboxAgent
 
         private sealed class IpIn { public string? Ip { get; set; } }
         private sealed class PortQueryIn { public string? Query { get; set; } public string? Host { get; set; } }
+        private sealed class FwPortsIn { public List<int>? Ports { get; set; } }
         private sealed class LiveIdIn { public int Id { get; set; } }
         private sealed class TcpStartIn { public string? Mode { get; set; } public int Port { get; set; } public string? Bind { get; set; } public List<string>? Hosts { get; set; } }
         private sealed class TcpHostIn { public int Id { get; set; } public string? Host { get; set; } }

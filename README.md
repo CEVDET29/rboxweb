@@ -91,7 +91,8 @@ masaüstü sürümü komutu kopyalanır. PowerShell'e yapıştırılınca `tools
 
 Zip'i hazırlamak ve yayınlamak (yalnızca sürüm değişince):
 
-1. `tools\publish-desktop.ps1` → `dist\RboxTools-desktop.zip` (Release, framework-dependent, ~7 MB).
+1. `tools\publish-desktop.ps1` → `dist\RboxTools-desktop-<sürüm>.zip`, ör. `RboxTools-desktop-1.21.0.zip`
+   (Release, framework-dependent, ~7 MB; updateFiles'sız kopyası `dist\public\` altında, aynı adla).
    `dist\updateFiles` klasörü varsa zip'e **kopyalanır** (klasöre dokunulmaz; `Güncelleme Raporu.txt` alınmaz).
    Kurulumda hedefte `updateFiles` yoksa oraya konur; varsa hastanenin klasörüne dokunulmaz, indirilen kopya
    `updateFiles_downloaded` adıyla yanına konur.
@@ -99,7 +100,8 @@ Zip'i hazırlamak ve yayınlamak (yalnızca sürüm değişince):
    > dosyaları da herkese açıktır; bu zip'i yüklemeden önce bunu göz önünde bulundurun.
 2. GitHub → Releases → **Draft a new release** → tag: `desktop` → zip'i ekle → **Set as a pre-release** işaretle → Publish.
    (Pre-release işaretlenmezse bu release "latest" olur ve `start-agent.ps1`'in indirdiği `RboxAgent.zip` bulunamaz.)
-   Güncellemek için aynı release'te zip'i silip yenisini yükleyin.
+   Güncellemek için aynı release'e yeni sürümlü zip'i yükleyin: `install-desktop.ps1` en yüksek sürümlü
+   `RboxTools-desktop-*.zip`'i indirir (eski sürümsüz `RboxTools-desktop.zip` 0 sayılır). Eskileri silmek isteğe bağlıdır.
 
 > Not: Tarayıcılar `https` sayfadan `http://127.0.0.1` adresine bağlanmaya izin verir (Chrome/Edge/Firefox). Chrome ilk
 > bağlantıda "yerel ağdaki cihazlara erişim" izni sorabilir; izin verin. Safari bunu engelleyebilir; Chrome/Edge kullanın.

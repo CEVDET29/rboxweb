@@ -14,8 +14,29 @@ $ErrorActionPreference = 'Stop'
 
 if ($Repo -like '*<*' -and -not $ZipUrl) { throw 'Give -Repo USER/REPO first.' }
 
-# Fixed release tag "desktop" holds RboxTools-desktop.zip (independent of the agent releases)
-$url   = if ($ZipUrl) { $ZipUrl } else { "https://github.com/$Repo/releases/download/desktop/RboxTools-desktop.zip" }
+# Fixed release tag "desktop" (independent of the agent releases) holds RboxTools-desktop-<version>.zip.
+# The highest version is used; an old unversioned RboxTools-desktop.zip counts as version 0.
+function Get-DesktopZipUrl {
+    $fallback = "https://github.com/$Repo/releases/download/desktop/RboxTools-desktop.zip"
+    try {
+        $rel = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/tags/desktop" -UseBasicParsing `
+                   -Headers @{ 'User-Agent' = 'RboxTools-install' }
+    } catch {
+        Write-Host "Could not read the release list ($($_.Exception.Message)); trying the old file name." -ForegroundColor Yellow
+        return $fallback
+    }
+    $best = $null; $bestVer = $null
+    foreach ($a in $rel.assets) {
+        if ($a.name -notmatch '^RboxTools-desktop(-(\d+(\.\d+){1,3}))?\.zip$') { continue }
+        $v = if ($Matches[2]) { [version]$Matches[2] } else { [version]'0.0' }
+        if ($null -eq $best -or $v -gt $bestVer) { $best = $a; $bestVer = $v }
+    }
+    if ($null -eq $best) { throw "No RboxTools-desktop zip found in the 'desktop' release of $Repo." }
+    Write-Host "Found: $($best.name)"
+    return $best.browser_download_url
+}
+
+$url   = if ($ZipUrl) { $ZipUrl } else { Get-DesktopZipUrl }
 $work  = Join-Path $env:TEMP 'RboxTools-desktop'
 $zip   = Join-Path $work 'RboxTools-desktop.zip'
 $stage = Join-Path $work 'files'
