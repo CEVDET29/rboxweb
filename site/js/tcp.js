@@ -1,14 +1,19 @@
 // TCP modülü: ajanın bulunduğu bilgisayarda bir portu dinler (sunucu) ya da listedeki cihazlara bağlanır (istemci);
 // gelen bağlantıları ve veriyi canlı gösterir (karşıya hiçbir şey gönderilmez). İş ajandaki TcpSession'da (WPF ile
 // aynı kod; JSON ayıklama ve biçimlendirme de orada). Sayfa yeni satırları saniyede bir yoklar (sürekli ping gibi).
+// HL7 görünümü (hl7.js): gelen veri tarayıcıda bağlantı başına HL7 mesajlarına çözülür; ACK açıksa onayı ajan gönderir.
+// Demo: ajan gömülü (anonimleştirilmiş) monitör / ventilatör / pompa kayıtlarını gerçek zamanlamasıyla oynatır.
 import { api } from "./api.js";
 import { $, $$, esc, storeGet, storeSet, toast, copyText, ipFilter, ICONS } from "./util.js";
+import { createHl7Panel } from "./hl7.js";
+import { Hl7Stream, parseHl7, importText, decodeFile, applyUserProfiles } from "./hl7core.js";
 
 const MAX_LINES = 3000;
 const QUICK = [["2575", "HL7 2575"], ["4000", "4000"], ["5000", "5000"], ["6000", "6000"], ["7000", "7000"], ["8000", "8000"]];
 const VIEWS = [["text", "Metin", "Gelen veriyi metin olarak göster (kontrol karakterleri <VT> <FS> gibi yazılır)"],
                ["hex", "Hex", "Gelen veriyi onaltılık (hex) döküm olarak göster"],
-               ["json", "JSON", "Veri JSON ise: yanda her gelen JSON biçimlendirilmiş olarak gösterilir"]];
+               ["json", "JSON", "Veri JSON ise: yanda her gelen JSON biçimlendirilmiş olarak gösterilir"],
+               ["hl7", "HL7", "HL7 v2 mesajları (ör. merkezi monitör ORU^R01): mesajlar, tablo, yatak başına satır ve canlı dalgalar"]];
 
 const fmtBytes = (n) => (n < 1024 ? `${n} bayt` : n < 1048576 ? `${(n / 1024).toFixed(1).replace(/\.0$/, "")} KB` : `${(n / 1048576).toFixed(1).replace(/\.0$/, "")} MB`);
 
@@ -28,7 +33,7 @@ export function createTcp() {
   const root = document.createElement("div");
   root.className = "stack pstack";
 
-  let session = null;        // { id, cursor, running, endpoint, active, total, bytes, mode }
+  let session = null;        // { id, cursor, ackCursor, running, endpoint, active, total, bytes, mode ("listen" | "connect" | "demo") }
   let lines = [];            // [{ time, remote, kind, text, hex, bytes, json }]
   let mode = storeGet("rbox.tcp.mode") === "connect" ? "connect" : "listen";
   let view = storeGet("rbox.tcp.view") || (storeGet("rbox.tcp.hex") === "1" ? "hex" : "text");
@@ -43,6 +48,13 @@ export function createTcp() {
   let listIps = new Set();
   let selected = "";         // "" = hepsi
   let pollTimer = null, polling = false, starting = false;
+  let conDirty = false;      // HL7 görünümündeyken konsol çizilmez (dalga verisi büyük); geri dönünce baştan çizilir
+  const hl7Streams = new Map();   // bağlantı → HL7 akışı (parça parça gelen mesajlar birleşir)
+  const hl7 = createHl7Panel({
+    onAck: (on) => setAck(on),
+    onLoad: (files) => loadFiles(files),
+    onChange: () => renderState(),
+  });
 
   root.innerHTML = `
     <section class="card">
@@ -73,13 +85,15 @@ export function createTcp() {
           <datalist id="tPorts"></datalist>
           <button class="btn primary" id="tStart">${ICONS.play} Başlat</button>
           <button class="btn" id="tStop">${ICONS.stop} Durdur</button>
+          <button class="btn" id="tDemo" title="Demo · cihaz bağlamadan örnek veriyle çalıştır: kayıtlı (anonimleştirilmiş) monitör, ventilatör ve pompa verisi, dalgalarıyla birlikte, gerçek zamanlamasıyla sürekli oynatılır. Durdur ile biter; port ayarları değişmez.">Demo</button>
           <span class="spacer" style="flex:1"></span>
           <span class="chips" id="tView" role="radiogroup" title="Gelen verinin gösterimi">
             ${VIEWS.map(([v, l, t]) => `<button class="chip" role="radio" data-view="${v}" title="${esc(t)}">${l}</button>`).join("")}
           </span>
-          <button class="btn" id="tCopy" title="Ekrandakini panoya kopyala (JSON görünümünde biçimlendirilmiş JSON'lar)">${ICONS.copy} Kopyala</button>
-          <button class="btn" id="tClear" title="Ekranı temizle (bağlantı sürer)">${ICONS.trash} Temizle</button>
+          <button class="btn ib" id="tCopy" title="Kopyala · ekrandakini panoya kopyala (JSON görünümünde biçimlendirilmiş JSON'lar, HL7'de ölçümler sekmeyle ayrılmış: Excel'e yapıştırılabilir)">${ICONS.copy}</button>
+          <button class="btn ib" id="tClear" title="Temizle · ekranı temizle (bağlantı sürer)">${ICONS.trash}</button>
         </div>
+        <div class="row tight" id="tHl7Row" style="margin-top:10px" hidden></div>
       </div>
     </section>
     <div class="tcp-grid" id="tGrid">
@@ -89,7 +103,7 @@ export function createTcp() {
           <div class="row tight" id="tAddRow" style="flex-wrap:nowrap;margin-bottom:10px">
             <input type="text" id="tNewIp" class="mono" style="flex:1;min-width:0" autocomplete="off" placeholder="IP ekle…"
               title="Listeye IP ekle (ör. 172.16.154.20) · Enter. Çalışırken eklenirse hemen bağlanılır.">
-            <button class="btn mini" id="tAddIp">${ICONS.plus} Ekle</button>
+            <button class="btn mini ib" id="tAddIp" title="Ekle · IP'yi listeye ekle (Enter)">${ICONS.plus}</button>
           </div>
           <div class="tcp-devlist" id="tDevs" role="listbox"
             title="Bir cihaza tıklayınca yalnızca onun verisi gösterilir; yeniden tıklayınca seçim kalkar ve tüm cihazların verisi görünür. Nokta: yeşil bağlı, gri bağlanıyor / bağlantı kapalı, kırmızı bağlanılamadı. Sayı: o cihazdan gelen veri parçası."></div>
@@ -104,6 +118,7 @@ export function createTcp() {
         <div class="card-h">JSON</div>
         <div class="card-b"><div class="tcp-con tcp-json" id="tJson"></div></div>
       </section>
+      <div id="tHl7" class="tcp-hl7" hidden></div>
     </div>`;
 
   const q = (id) => $("#" + id, root);
@@ -111,10 +126,14 @@ export function createTcp() {
     mode: q("tMode"), listen: q("tListen"), connect: q("tConnect"),
     port: q("tPort"), bind: q("tBind"), refresh: q("tRefresh"), cport: q("tCPort"), devCount: q("tDevCount"),
     newIp: q("tNewIp"), addIp: q("tAddIp"), addRow: q("tAddRow"),
-    start: q("tStart"), stop: q("tStop"), view: q("tView"), copy: q("tCopy"), clear: q("tClear"),
+    start: q("tStart"), stop: q("tStop"), demo: q("tDemo"), view: q("tView"), copy: q("tCopy"), clear: q("tClear"),
+    hl7Row: q("tHl7Row"), hl7Host: q("tHl7"), conCard: q("tCon").closest(".card"),
     hint: q("tHint"), state: q("tState"), grid: q("tGrid"), devs: q("tDevs"), noList: q("tNoList"), filter: q("tFilter"),
     con: q("tCon"), jsonCard: q("tJsonCard"), json: q("tJson"),
   };
+
+  el.hl7Host.append(hl7.root);
+  el.hl7Row.append(hl7.bar);
 
   // Port listesi: sabit portlar + elle girilip başlatılmış portlar (son kullanılan başta, en fazla 10)
   const MAX_CUSTOM_PORTS = 10;
@@ -155,12 +174,17 @@ export function createTcp() {
   };
   const canStart = () => mode === "listen" ? !!portOf(el.port) : !!portOf(el.cport) && clientDevices.length > 0;
 
-  async function start() {
-    if (!canStart() || session?.running || starting) return;
+  async function start(demo = false) {
+    if ((!demo && !canStart()) || session?.running || starting) return;
     starting = true; renderState();
     try {
       let body;
-      if (mode === "listen") {
+      if (demo) {
+        // Demo: dinleyici moduna ve HL7 görünümüne geçer; port ayarlarına dokunmaz
+        if (mode !== "listen") { mode = "listen"; storeSet("rbox.tcp.mode", mode); showDevices(); }
+        if (view !== "hl7") setView("hl7");
+        body = { mode: "demo" };
+      } else if (mode === "listen") {
         body = { mode, port: portOf(el.port), bind: el.bind.value || "0.0.0.0" };
         storeSet("rbox.tcp.port", String(body.port));
         storeSet("rbox.tcp.bind", body.bind);
@@ -168,10 +192,12 @@ export function createTcp() {
         body = { mode, hosts: clientDevices.map((d) => d.ip), port: portOf(el.cport) };
         storeSet("rbox.tcp.cport", String(body.port));
       }
+      body.ack = hl7.ack;
       const r = await api("/api/tcp/start", { method: "POST", body });
-      rememberPort(body.port);
+      if (!demo) rememberPort(body.port);
+      hl7Streams.clear();
       if (mode === "listen") { listenDevices = []; listenActive.clear(); showDevices(); }   // yeni dinleme: liste baştan
-      session = { id: r.id, cursor: 0, running: true, mode, port: body.port, endpoint: mode === "listen" ? `${body.bind}:${body.port}` : "", active: 0, total: 0, bytes: 0, hosts: [] };
+      session = { id: r.id, cursor: 0, ackCursor: 0, running: true, mode: demo ? "demo" : mode, port: body.port, endpoint: mode === "listen" && !demo ? `${body.bind}:${body.port}` : "", active: 0, total: 0, bytes: 0, hosts: [] };
       if (!pollTimer) pollTimer = setInterval(poll, 1000);
       await poll();
     } catch (e) {
@@ -191,7 +217,8 @@ export function createTcp() {
     if (polling || !session) return;
     polling = true;
     try {
-      const u = await api("/api/tcp/poll", { method: "POST", body: { id: session.id, after: session.cursor } });
+      // HL7 görünümünde onaltılık döküm istenmez (dalga verisinde yanıt yarıya iner)
+      const u = await api("/api/tcp/poll", { method: "POST", body: { id: session.id, after: session.cursor, hex: view !== "hl7", ackAfter: session.ackCursor } });
       if (u.gone) {
         session.running = false;
       } else {
@@ -200,6 +227,8 @@ export function createTcp() {
           session.cursor = u.lines.at(-1).seq;
           append(u.lines);
         }
+        if (u.acks?.length) session.ackCursor = u.acks.at(-1).seq;
+        if (u.acks?.length || u.ackCount) hl7.markAcks(u.acks || [], u.ackCount);
       }
       // Durdu ve son satırlar alındı: ajan oturumu kendisi siler, yoklama da biter
       if (!session.running && (u.gone || u.lines.length === 0)) { clearInterval(pollTimer); pollTimer = null; }
@@ -363,9 +392,11 @@ export function createTcp() {
         ? `${session.active} / ${session.hosts.length || clientDevices.length} cihaz bağlı · port ${session.port} · ${b}`
         : `Dinleniyor · ${session.endpoint} · ${session.active} açık bağlantı · ${listenDevices.length} cihaz · ${b}`;
     }
+    if (run && session.mode === "demo") text = `Demo oynatılıyor · ${session.active} cihaz bağlantısı (gerçek cihaz yok) · ${fmtBytes(session.bytes)}`;
     el.state.lastElementChild.textContent = text;
     const busy = run || starting;
     el.start.disabled = busy || !canStart();
+    el.demo.disabled = busy;
     el.stop.disabled = !run;
     [el.port, el.bind, el.refresh, el.cport].forEach((i) => (i.disabled = busy));
     el.devCount.textContent = clientDevices.length;
@@ -374,15 +405,21 @@ export function createTcp() {
     el.listen.hidden = mode !== "listen";
     el.connect.hidden = mode !== "connect";
     el.hint.title = hint() + " Karşı tarafa hiçbir şey gönderilmez. Sayfa kapanırsa bağlantı birkaç dakika içinde kendiliğinden durur.";
-    el.copy.disabled = el.clear.disabled = lines.length === 0;
+    el.copy.disabled = el.clear.disabled = lines.length === 0 && !hl7.hasMessages;
     el.jsonCard.hidden = view !== "json";
     el.grid.classList.toggle("json", view === "json");
+    el.grid.classList.toggle("hl7", view === "hl7");
+    el.conCard.hidden = view === "hl7";
+    el.hl7Host.hidden = view !== "hl7";
+    el.hl7Row.hidden = view !== "hl7";
   }
 
   const head = (l) => (l.kind === "data" ? `← ${fmtBytes(l.bytes)}` : l.text);
+  // HL7 görünümündeyken onaltılık döküm istenmez (yanıt küçülsün): o satırlarda yalnız metin vardır
+  const hexOf = (l) => l.hex ?? "(onaltılık döküm yok: bu veri HL7 görünümündeyken geldi)";
   const lineHtml = (l) =>
     `<div class="tl ${l.kind}"><span class="t">${esc(l.time)}</span>${l.remote ? `<span class="r">${esc(l.remote)}</span>` : ""}<span class="h">${esc(head(l))}</span>` +
-    (l.kind === "data" ? `<div class="b">${esc(view === "hex" ? l.hex : l.text)}</div>` : "") + `</div>`;
+    (l.kind === "data" ? `<div class="b">${esc(view === "hex" ? hexOf(l) : l.text)}</div>` : "") + `</div>`;
 
   const jsonHead = (l) => (l.kind === "data" ? (l.json.length > 1 ? `JSON (${l.json.length})` : "JSON") : l.text);
   const jsonHtml = (l) =>
@@ -396,6 +433,7 @@ export function createTcp() {
   const EMPTY_JSON = `<div class="tcp-empty">Henüz JSON yok. Gelen verideki her { … } ya da [ … ] değeri burada biçimlendirilmiş olarak görünür; parçalı gelen JSON birleştirilir.</div>`;
 
   function renderAll() {
+    if (view === "hl7") { conDirty = true; return; }   // konsol gizli: geri dönünce çizilir
     const vis = lines.filter(passes);
     el.con.innerHTML = vis.length ? vis.map(lineHtml).join("") : EMPTY_CON();
     el.con.scrollTop = el.con.scrollHeight;
@@ -409,8 +447,8 @@ export function createTcp() {
   const atBottom = (box) => box.scrollHeight - box.scrollTop - box.clientHeight < 40;
 
   function append(newLines) {
-    // Dinleyici: porta bağlanan yeni cihazlar listeye eklenir, bağlantı durumları güncellenir
-    if (session?.mode === "listen") {
+    // Dinleyici (ve demo): porta bağlanan yeni cihazlar listeye eklenir, bağlantı durumları güncellenir
+    if (session?.mode === "listen" || session?.mode === "demo") {
       let changed = false;
       for (const l of newLines) changed = trackListen(l) || changed;
       if (changed && mode === "listen") renderDevices();
@@ -419,6 +457,8 @@ export function createTcp() {
     newLines.forEach(countLine);
     let dropped = 0;
     if (lines.length > MAX_LINES) { dropped = lines.length - MAX_LINES; lines.splice(0, dropped); }
+    feedHl7(newLines);
+    if (view === "hl7") { conDirty = true; updateCounts(); return; }
 
     const vis = newLines.filter(passes);
     // Düşen eski satırlar ya da ilk veri: baştan çizmek en basiti; yoksa yalnızca yeni satırlar eklenir
@@ -441,10 +481,71 @@ export function createTcp() {
 
   const copyLine = (l) => {
     const h = `[${l.time}]${l.remote ? " " + l.remote : ""} ${head(l)}`;
-    return l.kind === "data" ? h + "\r\n" + (view === "hex" ? l.hex : l.text).replace(/\n/g, "\r\n") : h;
+    return l.kind === "data" ? h + "\r\n" + (view === "hex" ? hexOf(l) : l.text).replace(/\n/g, "\r\n") : h;
   };
   const copyJson = (l) => `[${l.time}]${l.remote ? " " + l.remote : ""}\r\n` +
     l.json.map((j) => (j.error ? `// ${j.error}\r\n` : "") + j.text.replace(/\n/g, "\r\n")).join("\r\n");
+
+  // ── HL7 ─────────────────────────────────────────────────────
+  /** Yeni satırları bağlantısının HL7 akışına ekler; tamamlanan mesajlar panele gider (WPF FeedHl7). */
+  function feedHl7(newLines) {
+    const items = [];
+    for (const l of newLines) {
+      if (!l.remote) continue;
+      if (l.kind === "data") {
+        let st = hl7Streams.get(l.remote);
+        if (!st) hl7Streams.set(l.remote, (st = new Hl7Stream()));
+        for (const text of st.push(l.text)) for (const msg of parseHl7(text)) items.push({ msg, source: l.remote, received: new Date() });
+      } else if (l.kind === "disconnect") {
+        const st = hl7Streams.get(l.remote);
+        hl7Streams.delete(l.remote);
+        const rest = st?.flush();
+        if (rest) for (const msg of parseHl7(rest)) items.push({ msg, source: l.remote, received: new Date() });
+      }
+    }
+    // Dalga işleme kapalıysa dalga mesajları çözülmeden atlanır (ACK açıksa ajan yine onaylar); demoda hep işlenir
+    if (items.length) hl7.add(items, { skipWaves: !hl7.processWaves && session?.mode !== "demo" });
+  }
+
+  function setView(v) {
+    view = v; storeSet("rbox.tcp.view", view);
+    hl7.setShown(view === "hl7");
+    renderState();
+    if (view !== "hl7") { conDirty = false; renderAll(); }
+  }
+
+  async function setAck(on) {
+    if (!session?.running || session.mode === "demo") return;
+    try { await api("/api/tcp/ack", { method: "POST", body: { id: session.id, on } }); } catch (e) { toast(e.message, 4000); }
+  }
+
+  /** Çevrimdışı deneme: kayıtlı HL7 verisini dosyadan okuyup HL7 görünümüne ekler (dalgalar gerçek hızında). */
+  async function loadFiles(files) {
+    // Yüklenen mesajların kaynağı listedeki cihazlar değil: cihaz süzgeci açıksa hepsi gizli kalırdı
+    if (selected) { selected = ""; renderDevices(); renderAll(); hl7.setFilter(null); }
+    let total = 0;
+    const notes = [];
+    for (const f of files) {
+      try {
+        const items = importText(decodeFile(await f.arrayBuffer()), "dosya · " + f.name);
+        const now = new Date();
+        hl7.add(items.map((i) => ({ ...i, received: now })), { replay: true });
+        total += items.length;
+        if (!items.length) notes.push(`${f.name}: HL7 mesajı bulunamadı`);
+      } catch (e) { notes.push(`${f.name}: okunamadı (${e.message})`); }
+    }
+    toast((total ? `${total} mesaj yüklendi.` : "") + (notes.length ? " " + notes.join(" · ") : ""), notes.length ? 7000 : 3000);
+    renderState();
+  }
+
+  /** Kullanıcının HL7 profilleri (ajanın bilgisayarındaki hl7-profiles.json; WPF ile ortak). */
+  async function loadProfiles() {
+    try {
+      const r = await api("/api/hl7/profiles");
+      if (r.error) toast(`HL7 profil dosyası okunamadı; yerleşik profiller kullanılıyor. ${r.path}: ${r.error}`, 8000);
+      else if (Array.isArray(r.profiles)) applyUserProfiles(r.profiles, r.path);
+    } catch { /* eski ajan: yalnız yerleşik profiller */ }
+  }
 
   // ── Olaylar ─────────────────────────────────────────────────
   const digitsOnly = (input) => input.addEventListener("input", () => {
@@ -465,8 +566,9 @@ export function createTcp() {
   });
   el.view.addEventListener("click", (e) => {
     const b = e.target.closest("[data-view]"); if (!b || b.dataset.view === view) return;
-    view = b.dataset.view; storeSet("rbox.tcp.view", view); renderState(); renderAll();
+    setView(b.dataset.view);
   });
+  el.demo.addEventListener("click", () => start(true));
   el.devs.addEventListener("click", (e) => {
     const rm = e.target.closest("[data-rm]");
     if (rm) { removeIp(rm.dataset.rm); return; }
@@ -474,6 +576,7 @@ export function createTcp() {
     // Tek seçim; seçili cihaza yeniden tıklamak süzgeci kaldırır
     selected = r.dataset.ip === selected ? "" : r.dataset.ip;
     renderDevices(); renderAll();
+    hl7.setFilter(selected || null);
   });
   el.json.addEventListener("click", async (e) => {
     const b = e.target.closest("[data-copyjson]"); if (!b) return;
@@ -482,9 +585,14 @@ export function createTcp() {
     catch { toast("Kopyalanamadı"); }
   });
   el.refresh.addEventListener("click", loadAddresses);
-  el.start.addEventListener("click", start);
+  el.start.addEventListener("click", () => start());
   el.stop.addEventListener("click", stop);
   el.copy.addEventListener("click", async () => {
+    if (view === "hl7") {
+      if (!hl7.hasMessages) { toast("Kopyalanacak bir şey yok"); return; }
+      try { await copyText(hl7.copyText()); toast("Kopyalandı"); } catch { toast("Kopyalanamadı"); }
+      return;
+    }
     const vis = lines.filter(passes);
     const text = view === "json"
       ? vis.filter((l) => l.json?.length).map(copyJson).join("\r\n\r\n")
@@ -496,6 +604,7 @@ export function createTcp() {
   // Temizle: dinleyicide bağlantısı kapanmış cihazlar da listeden kalkar
   el.clear.addEventListener("click", () => {
     lines = [];
+    hl7.clear();
     listenDevices = listenDevices.filter((d) => (listenActive.get(d.ip) || 0) > 0);
     showDevices();
   });
@@ -509,8 +618,10 @@ export function createTcp() {
     root,
     setDevices,
     onShow() {
-      if (!loaded) { loaded = true; loadAddresses(); }
-      if (!session?.running) (mode === "listen" ? el.port : el.cport).focus();
+      if (!loaded) { loaded = true; loadAddresses(); loadProfiles(); }
+      hl7.setShown(view === "hl7");
+      if (!session?.running && view !== "hl7") (mode === "listen" ? el.port : el.cport).focus();
     },
+    onHide() { hl7.setShown(false); },
   };
 }

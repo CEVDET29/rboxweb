@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -24,11 +25,22 @@ namespace RboxAgent.Modules.Tcp
 
     /// <summary>
     /// TCP oturumu (dinleyici ya da istemci). Gelen veriyi satır olarak (<see cref="Line"/>) bildirir;
-    /// karşı tarafa hiçbir şey göndermez. Önce <see cref="TryStart"/>, sonra <see cref="RunAsync"/> çağrılır.
+    /// karşı tarafa kendiliğinden hiçbir şey göndermez (yalnızca <see cref="SendAsync"/> çağrılırsa, ör. HL7 onayı).
+    /// Önce <see cref="TryStart"/>, sonra <see cref="RunAsync"/> çağrılır.
     /// </summary>
     public abstract class TcpSession
     {
         private const int BufferSize = 8192;
+
+        /// <summary>Açık bir bağlantının akışı; aynı bağlantıya iki yazma üst üste binmesin diye kilitli.</summary>
+        private sealed class Peer(NetworkStream stream)
+        {
+            public NetworkStream Stream { get; } = stream;
+            public SemaphoreSlim Gate { get; } = new(1, 1);
+        }
+
+        // Açık bağlantılar ("ip:port" → akış): yalnızca istenirse karşıya yanıt yazmak için
+        private readonly ConcurrentDictionary<string, Peer> _peers = new();
 
         private long _seq;
         protected int _active;
@@ -54,6 +66,24 @@ namespace RboxAgent.Modules.Tcp
         protected void Emit(TcpLineKind kind, string remote, string text, string hex = "", int bytes = 0, IReadOnlyList<TcpJson>? json = null) =>
             Line?.Invoke(new TcpLine(Interlocked.Increment(ref _seq), DateTime.Now, remote, kind, text, hex, bytes, json));
 
+        /// <summary>
+        /// Açık bir bağlantıya veri yazar (ör. HL7 ACK). <paramref name="remote"/> satırlardaki adrestir ("ip:port").
+        /// Bağlantı kapalıysa ya da 5 sn'de yazılamazsa false döner; istisna fırlatmaz.
+        /// </summary>
+        public async Task<bool> SendAsync(string remote, byte[] data)
+        {
+            if (!_peers.TryGetValue(remote, out var peer)) return false;
+            try
+            {
+                using var timeout = new CancellationTokenSource(5000);
+                await peer.Gate.WaitAsync(timeout.Token);
+                try { await peer.Stream.WriteAsync(data, timeout.Token); }
+                finally { peer.Gate.Release(); }
+                return true;
+            }
+            catch (Exception) { return false; }
+        }
+
         protected void EmitStopped() =>
             Emit(TcpLineKind.Info, "", $"Durduruldu. Toplam {TotalConnections} bağlantı, {FormatBytes(BytesReceived)} alındı.");
 
@@ -70,9 +100,12 @@ namespace RboxAgent.Modules.Tcp
             var json = new JsonAssembler();
             var buf = new byte[BufferSize];
             var chars = new char[BufferSize + 8];
+            Peer? peer = null;
             try
             {
                 var stream = client.GetStream();
+                peer = new Peer(stream);
+                _peers[remote] = peer;
                 while (true)
                 {
                     int n = await stream.ReadAsync(buf, ct);
@@ -91,6 +124,10 @@ namespace RboxAgent.Modules.Tcp
                 reason = se.SocketErrorCode == SocketError.ConnectionReset ? "Bağlantı karşı taraftan kesildi" : "Bağlantı hatası: " + se.Message;
             }
             catch (Exception ex) { reason = "Bağlantı hatası: " + ex.Message; }
+            finally
+            {
+                if (peer != null) _peers.TryRemove(new KeyValuePair<string, Peer>(remote, peer));
+            }
             return (reason, got, json.Flush());
         }
 

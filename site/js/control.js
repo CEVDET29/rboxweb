@@ -288,7 +288,7 @@ export function createControl(ctx) {
     <section class="card">
       <div class="card-h row" style="justify-content:space-between">GENEL KONTROL <b id="cSummary" style="font-size:13px;text-transform:none;letter-spacing:0;color:var(--text)">Cihaz listesi yüklenmedi</b></div>
       <div class="card-b row">
-        <button class="btn primary" id="cRefresh">${ICONS.redo} Yenile</button>
+        <button class="btn primary ib" id="cRefresh" title="Yenile · tüm cihazları yeniden kontrol et">${ICONS.redo}</button>
         <label class="chk"><input type="checkbox" id="cAuto"> Otomatik yenile</label>
         <select id="cSecs" title="Otomatik yenileme aralığı"><option value="10">10 sn</option><option value="15" selected>15 sn</option><option value="30">30 sn</option><option value="60">60 sn</option></select>
         <button class="btn icon" id="cToggle" title="Tüm odaları daralt / genişlet" style="border-color:var(--border-strong)">${ICONS.chevrons}</button>

@@ -65,7 +65,7 @@ export function createYbdb() {
           <span class="spacer" style="flex:1"></span>
           <span class="badge sev-muted" id="yState">Bağlı değil</span>
           <span class="sm muted" id="yLast">Son güncelleme: ${DASH}</span>
-          <button class="btn" id="yRefresh" disabled>${ICONS.redo} Yenile (F5)</button>
+          <button class="btn ib" id="yRefresh" disabled title="Yenile (F5)">${ICONS.redo}</button>
         </div>
         <div class="txt-error" id="yErr" style="margin-top:8px" hidden></div>
       </div>

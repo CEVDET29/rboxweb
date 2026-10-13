@@ -23,6 +23,7 @@ Tarayıcı (github.io'dan gelen arayüz) ─► http://127.0.0.1:47800 ─► Rb
 | Cihaz Kontrol | ✅ tamam (oda gruplu cihaz kartları: sıcaklık, bellek, depolama + genişletme, SerialWorker + sürüm, **USB seri aygıtlar** (USB0/USB1: üretici ve ürün), ağ / Wi-Fi, MAC kontrolü; toplu ve tek cihaz yeniden başlatma, otomatik yenileme, karttan "Güncelle") |
 | Dosyalar | ✅ tamam (updateFiles klasörünü listele / tarayıcıda düzenle / yükle / indir / adı değiştir / sil, "beklenen dosyalar" listesi, zip ile dışa-içe aktarma) |
 | Port Kontrol | ✅ tamam (portu dinleyen uygulama / uygulamanın portları: yol, sürüm, Windows hizmeti, kullanıcı, komut satırı, bağlantılar ve uzak bilgisayar adları, http.sys üzerinden dinleyen asıl süreç, güvenlik duvarı gelen kuralları, SQL Server örnekleri; uzak bilgisayarda port durumu, NetBIOS / DNS adı, işletim sistemi tahmini, MAC, SSH / HTTP / TLS tanıtımı). WPF ile aynı `PortInspector.cs`; salt okunur |
+| TCP Dinleyici | ✅ tamam (dinleyici / istemci, Metin · Hex · JSON · **HL7** görünümü; HL7: mesaj listesi + ayrıntı (ölçümler, alanlar, ham, ACK), tablo, yatak başına satır, cihaz türü süzgeci, **canlı dalgalar** (EKG, Pleth, solunum, CO₂, ventilatör Paw / akış / hacim; tüm yataklar kart kart ya da tek yatak büyük), dosyadan yükleme, **ACK gönder** (onayı ajan anında yazar), **Demo** (ajana gömülü, anonimleştirilmiş kayıtlar)). HL7 ayrıştırması tarayıcıda (`site/js/hl7core.js`, WPF `Modules/Hl7` ile aynı kurallar); yerleşik cihaz profilleri `site/js/hl7profiles.js` (WPF `hl7-profiles.default.json`'dan üretilir), kullanıcı profilleri ajanın bilgisayarındaki `hl7-profiles.json` |
 
 **Tüm web modülleri tamamlandı.**
 
@@ -93,6 +94,7 @@ Zip'i hazırlamak ve yayınlamak (yalnızca sürüm değişince):
 
 1. `tools\publish-desktop.ps1` → `dist\RboxTools-desktop-<sürüm>.zip`, ör. `RboxTools-desktop-1.21.0.zip`
    (Release, framework-dependent, ~7 MB; updateFiles'sız kopyası `dist\public\` altında, aynı adla).
+   Önceki sürümlerin zip'leri silinmez; `dist\eski-surumler\` (ve `dist\public\eski-surumler\`) klasörüne taşınır.
    `dist\updateFiles` klasörü varsa zip'e **kopyalanır** (klasöre dokunulmaz; `Güncelleme Raporu.txt` alınmaz).
    Kurulumda hedefte `updateFiles` yoksa oraya konur; varsa hastanenin klasörüne dokunulmaz, indirilen kopya
    `updateFiles_downloaded` adıyla yanına konur.

@@ -96,7 +96,7 @@ export function createCihazEditor({ getYataklar }) {
       <div class="card-h row" style="justify-content:space-between">
         <span>Cihaz tablosu <span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="czCount"></span></span>
         <span class="row tight" style="text-transform:none;letter-spacing:0;font-weight:500">
-          <button class="btn" id="czReload">${ICONS.redo} Yenile</button>
+          <button class="btn ib" id="czReload" title="Yenile · cihaz listesini veritabanından yeniden oku">${ICONS.redo}</button>
           <button class="btn primary" id="czNew">${ICONS.plus} Yeni cihaz</button>
         </span>
       </div>

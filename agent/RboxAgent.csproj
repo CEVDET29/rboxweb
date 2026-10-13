@@ -8,12 +8,16 @@
     <AssemblyName>RboxAgent</AssemblyName>
     <Product>RasyoBOX Ajan</Product>
     <Company>Rasyomed</Company>
-    <Version>0.14.0</Version>
+    <Version>0.16.0</Version>
     <!-- YalnÄ±zca temel .NET 8 Ã§alÄ±ÅŸma zamanÄ± gerekir (ASP.NET Core gerekmez): HttpListener kullanÄ±lÄ±r. -->
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- Ajan yalnÄ±zca Windows'ta Ã§alÄ±ÅŸÄ±r (DPAPI, SendARP) -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- TCP demo: anonimleştirilmiş monitör / ventilatör / pompa kayıtları (WPF RboxTools Modules/Tcp/Demo ile aynı dosyalar) -->
+    <EmbeddedResource Include="Modules\Tcp\Demo\demo-*.txt" LogicalName="%(Filename)%(Extension)" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="ExcelDataReader" Version="3.7.0" />
     <PackageReference Include="ExcelDataReader.DataSet" Version="3.7.0" />

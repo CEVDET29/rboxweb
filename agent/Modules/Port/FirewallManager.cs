@@ -13,7 +13,8 @@ namespace RboxAgent.Modules.Port
     /// <summary>
     /// Güvenlik duvarı port izni: verilen TCP portları için bu bilgisayarda gelen bağlantıya izin veren bir kural
     /// var mı (okuma, yönetici gerekmez) ve "RasyoBOX TCP &lt;port&gt;" adlı izin kuralını ekleme / kaldırma.
-    /// Ekleme ve kaldırma netsh ile yapılır; uygulama yönetici değilse Windows yönetici izni (UAC) sorar.
+    /// Ekleme PowerShell (New-NetFirewallRule; açıklama Türkçe karakterli olabilsin diye), olmazsa netsh ile;
+    /// kaldırma netsh ile yapılır. Uygulama yönetici değilse Windows yönetici izni (UAC) sorar.
     /// Yalnızca bu adla oluşturulan kurallara dokunulur; başka kurallar değiştirilmez.
     /// </summary>
     public static class FirewallManager
@@ -23,6 +24,19 @@ namespace RboxAgent.Modules.Port
 
         public const string RulePrefix = "RasyoBOX TCP ";
         public static string RuleName(int port) => RulePrefix + port;
+
+        /// <summary>Kuralın açıklaması (Windows Güvenlik Duvarı'ndaki "Açıklama"); kullanıcı değiştirebilir.</summary>
+        public const string DefaultDescription = "RasyoBOX";
+        /// <summary>0.14.0'ın yazdığı sabit açıklama; ekranda "RasyoBOX" gösterilir.</summary>
+        private const string LegacyDescription = "RasyoBOX Araclari tarafindan eklendi";
+
+        /// <summary>Boşsa "RasyoBOX"; kontrol karakterleri atılır, en fazla 200 karakter.</summary>
+        public static string CleanDescription(string? d)
+        {
+            var t = new string((d ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();
+            if (t.Length > 200) t = t[..200].TrimEnd();
+            return t.Length == 0 ? DefaultDescription : t;
+        }
 
         private const int ProfAll = 0x7FFFFFFF;
         private static readonly (int Bit, string Name)[] Profs = { (1, "Etki alanı"), (2, "Özel"), (4, "Genel") };
@@ -56,11 +70,14 @@ namespace RboxAgent.Modules.Port
                 var t = Type.GetTypeFromProgID("HNetCfg.FwPolicy2") ?? throw new InvalidOperationException("Güvenlik duvarı hizmetine ulaşılamadı.");
                 policy = Activator.CreateInstance(t)!;
                 int current = Convert.ToInt32(Get(policy, "CurrentProfileTypes"));
-                st.Profiles = string.Join(", ", Profs.Select(p =>
-                {
-                    bool on = Convert.ToBoolean(Get(policy, "FirewallEnabled", p.Bit));
-                    return $"{p.Name}: {(on ? "açık" : "KAPALI")}{((current & p.Bit) != 0 ? " (etkin ağ)" : "")}";
-                }));
+                foreach (var pr in Profs)
+                    st.ProfileList.Add(new FwProfile
+                    {
+                        Name = pr.Name,
+                        On = Convert.ToBoolean(Get(policy, "FirewallEnabled", pr.Bit)),
+                        Active = (current & pr.Bit) != 0,
+                    });
+                st.Profiles = string.Join(", ", st.ProfileList.Select(x => $"{x.Name}: {(x.On ? "açık" : "KAPALI")}{(x.Active ? " (etkin ağ)" : "")}"));
                 st.ActiveProfileOff = Profs.Any(p => (current & p.Bit) != 0 && !Convert.ToBoolean(Get(policy, "FirewallEnabled", p.Bit)));
 
                 var rules = Get(policy, "Rules")!;
@@ -81,6 +98,7 @@ namespace RboxAgent.Modules.Port
                         var rr = new FwRuleRef
                         {
                             Name = Get(r, "Name") as string ?? "",
+                            Description = Get(r, "Description") as string ?? "",
                             Enabled = Convert.ToBoolean(Get(r, "Enabled")),
                             Allow = Convert.ToInt32(Get(r, "Action")) == 1,
                             Program = app.Length > 0 ? Path.GetFileName(Environment.ExpandEnvironmentVariables(app)) : "",
@@ -98,15 +116,20 @@ namespace RboxAgent.Modules.Port
             }
             finally { if (policy != null && Marshal.IsComObject(policy)) Marshal.ReleaseComObject(policy); }
 
+            var listeners = ReadListeners(ports);
             foreach (var p in ports)
             {
                 var list = found[p];
+                var own = list.Select(x => x.rule).FirstOrDefault(x => x.Name.Equals(RuleName(p), StringComparison.OrdinalIgnoreCase));
                 var ps = new FwPortStatus
                 {
                     Port = p,
                     Service = PortInspector.ServiceName(p),
                     Own = list.Any(x => x.rule.Name.Equals(RuleName(p), StringComparison.OrdinalIgnoreCase)),
                     OwnEnabled = list.Any(x => x.rule.Enabled && x.rule.Name.Equals(RuleName(p), StringComparison.OrdinalIgnoreCase)),
+                    OwnDescription = own == null ? "" : own.Description is "" or LegacyDescription ? DefaultDescription : own.Description,
+                    Listening = listeners.ContainsKey(p),
+                    ListenProcess = listeners.TryGetValue(p, out var lp) ? lp : "",
                     Rules = list.Select(x => x.rule).OrderByDescending(x => x.Enabled).ThenBy(x => x.Name).ToList(),
                 };
                 // Etkin ağ profilinde geçerli, programa bağlı olmayan etkin kurallar belirleyicidir; engelleme izinden üstündür.
@@ -119,6 +142,33 @@ namespace RboxAgent.Modules.Port
                 st.Ports.Add(ps);
             }
             return st;
+        }
+
+        /// <summary>
+        /// Portu TCP'de dinleyen süreçler (port → "sqlservr.exe" / "System (http.sys)"). İzin verilse bile portu dinleyen
+        /// bir uygulama yoksa bağlantı kurulamaz; kutucukta bu da gösterilir. Okunamazsa boş döner.
+        /// </summary>
+        private static Dictionary<int, string> ReadListeners(List<int> ports)
+        {
+            var map = new Dictionary<int, string>();
+            try
+            {
+                var set = new HashSet<int>(ports);
+                var names = new Dictionary<int, string>();
+                string NameOf(int pid)
+                {
+                    if (names.TryGetValue(pid, out var n)) return n;
+                    n = pid == 4 ? "System (http.sys)" : "PID " + pid;
+                    try { using var pr = Process.GetProcessById(pid); n = pr.ProcessName + ".exe"; if (pid == 4) n = "System (http.sys)"; } catch { }
+                    return names[pid] = n;
+                }
+                foreach (var g in PortInspector.ReadEndpoints()
+                             .Where(e => e.Protocol.StartsWith("TCP") && e.State == "LISTEN" && set.Contains(e.LocalPort))
+                             .GroupBy(e => e.LocalPort))
+                    map[g.Key] = string.Join(", ", g.Select(e => e.Pid).Distinct().Where(pid => pid > 0).Select(NameOf).Distinct());
+            }
+            catch { }
+            return map;
         }
 
         private static bool PortListContains(string list, int port)
@@ -135,31 +185,87 @@ namespace RboxAgent.Modules.Port
 
         // ── Ekleme / kaldırma ───────────────────────────────────────────────
 
-        /// <summary>Her port için "RasyoBOX TCP &lt;port&gt;" gelen izin kuralını (TCP, tüm profiller) oluşturur; varsa yeniler.</summary>
-        public static Task<FwActionResult> AllowAsync(IEnumerable<int> portList, CancellationToken ct = default) =>
-            RunAsync(CleanPorts(portList), add: true, ct);
+        /// <summary>
+        /// Her port için "RasyoBOX TCP &lt;port&gt;" gelen izin kuralını (TCP, tüm profiller) verilen açıklamayla
+        /// oluşturur; varsa yeniler (açıklama da değişir).
+        /// </summary>
+        public static Task<FwActionResult> AllowAsync(IEnumerable<int> portList, string? description = null, CancellationToken ct = default) =>
+            RunAsync(CleanPorts(portList), add: true, CleanDescription(description), ct);
 
         /// <summary>Yalnızca bu uygulamanın oluşturduğu "RasyoBOX TCP &lt;port&gt;" kurallarını siler.</summary>
         public static Task<FwActionResult> RemoveAsync(IEnumerable<int> portList, CancellationToken ct = default) =>
-            RunAsync(CleanPorts(portList), add: false, ct);
+            RunAsync(CleanPorts(portList), add: false, "", ct);
 
-        private static async Task<FwActionResult> RunAsync(List<int> ports, bool add, CancellationToken ct)
+        private static List<string> NetshCommands(List<int> ports, bool add, string description)
         {
-            var res = new FwActionResult();
-            if (ports.Count == 0) { res.Message = "Port seçilmedi."; res.Status = ReadStatus(ports); return res; }
-
             var cmds = new List<string>();
             foreach (var p in ports)
             {
                 cmds.Add($"netsh advfirewall firewall delete rule name=\"{RuleName(p)}\" >nul 2>&1");
                 if (add)
                     cmds.Add($"netsh advfirewall firewall add rule name=\"{RuleName(p)}\" dir=in action=allow protocol=TCP localport={p} profile=any enable=yes"
-                             + $" description=\"RasyoBOX Araclari tarafindan eklendi\" >nul");
+                             + $" description=\"{AsciiForCmd(description)}\" >nul");
             }
+            return cmds;
+        }
+
+        /// <summary>netsh yedeği için: .cmd dosyası ASCII yazılır, Türkçe harfler sadeleştirilir, tırnak / % / ^ atılır.</summary>
+        private static string AsciiForCmd(string s)
+        {
+            var map = new Dictionary<char, string> { ['ç'] = "c", ['Ç'] = "C", ['ğ'] = "g", ['Ğ'] = "G", ['ı'] = "i", ['İ'] = "I",
+                                                     ['ö'] = "o", ['Ö'] = "O", ['ş'] = "s", ['Ş'] = "S", ['ü'] = "u", ['Ü'] = "U" };
+            var sb = new StringBuilder();
+            foreach (var c in s)
+            {
+                if (map.TryGetValue(c, out var r)) sb.Append(r);
+                else if (c is >= ' ' and <= '~' && c is not ('"' or '%' or '^' or '&' or '|' or '<' or '>')) sb.Append(c);
+            }
+            var t = sb.ToString().Trim();
+            return t.Length == 0 ? DefaultDescription : t;
+        }
+
+        /// <summary>Elevated PowerShell için betik: açıklama tek tırnaklı dizgede (tırnaklar ikilenir), dosya UTF-8 BOM'lu.</summary>
+        private static string PowerShellAddScript(List<int> ports, string description)
+        {
+            // PowerShell ‘ ’ ‚ ‛ işaretlerini de tek tırnak sayar: hepsi ' yapılıp ikilenir
+            var d = new string(description.Select(c => c is '\u2018' or '\u2019' or '\u201A' or '\u201B' ? '\'' : c).ToArray()).Replace("'", "''");
+            var sb = new StringBuilder();
+            sb.AppendLine("$ErrorActionPreference = 'Continue'");
+            sb.AppendLine($"$d = '{d}'");
+            sb.AppendLine($"foreach ($p in {string.Join(", ", ports)}) {{");
+            sb.AppendLine($"  $n = '{RulePrefix}' + $p");
+            sb.AppendLine("  Get-NetFirewallRule -DisplayName $n -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue");
+            sb.AppendLine("  New-NetFirewallRule -DisplayName $n -Direction Inbound -Action Allow -Protocol TCP -LocalPort $p -Profile Any -Enabled True -Description $d | Out-Null");
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        private static async Task<FwActionResult> RunAsync(List<int> ports, bool add, string description, CancellationToken ct)
+        {
+            var res = new FwActionResult();
+            if (ports.Count == 0) { res.Message = "Port seçilmedi."; res.Status = ReadStatus(ports); return res; }
 
             try
             {
-                await Task.Run(() => RunScript(cmds, ct), ct);
+                if (add)
+                {
+                    bool psRan = false;
+                    try { await Task.Run(() => RunPowerShell(PowerShellAddScript(ports, description), ct), ct); psRan = true; }
+                    catch (Win32Exception ex) when (ex.NativeErrorCode == 1223) { throw; }
+                    catch { /* PowerShell yok / engelli: netsh yedeği aşağıda */ }
+
+                    // PowerShell kuralları oluşturamadıysa (NetSecurity modülü yok, betik engellendi…) eksikler için netsh
+                    var missing = psRan ? ReadStatus(ports).Ports.Where(p => !p.OwnEnabled).Select(p => p.Port).ToList() : ports;
+                    if (missing.Count > 0)
+                    {
+                        res.UsedFallback = true;
+                        await Task.Run(() => RunScript(NetshCommands(missing, true, description), ct), ct);
+                    }
+                }
+                else
+                {
+                    await Task.Run(() => RunScript(NetshCommands(ports, false, ""), ct), ct);
+                }
             }
             catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
             {
@@ -179,7 +285,7 @@ namespace RboxAgent.Modules.Port
             var bad = res.Status.Ports.Where(p => add ? !p.OwnEnabled : p.Own).Select(p => p.Port).ToList();
             res.Ok = bad.Count == 0;
             res.Message = add
-                ? (res.Ok ? $"{ports.Count} port için izin kuralı eklendi." : $"Kural eklenemedi: {string.Join(", ", bad)}")
+                ? (res.Ok ? $"{ports.Count} port için izin kuralı eklendi (açıklama: {description})." : $"Kural eklenemedi: {string.Join(", ", bad)}")
                 : (res.Ok ? $"{ports.Count} port için RasyoBOX kuralı kaldırıldı." : $"Kural kaldırılamadı: {string.Join(", ", bad)}");
             if (res.Ok && add && res.Status.Ports.Any(p => p.State == "blocked"))
                 res.Message += " Uyarı: başka bir engelleme kuralı hâlâ geçerli (engelleme izinden üstündür).";
@@ -191,18 +297,25 @@ namespace RboxAgent.Modules.Port
         {
             var file = Path.Combine(Path.GetTempPath(), $"rbox-fw-{Guid.NewGuid():N}.cmd");
             File.WriteAllText(file, "@echo off\r\n" + string.Join("\r\n", cmds) + "\r\n", Encoding.ASCII);
-            try { RunCmd(file, ct); }
+            try { RunElevated(Path.Combine(Environment.SystemDirectory, "cmd.exe"), $"/d /c call \"{file}\"", ct); }
             finally { try { File.Delete(file); } catch { } }
         }
 
-        private static void RunCmd(string scriptFile, CancellationToken ct)
+        /// <summary>Betiği geçici .ps1 dosyasına (UTF-8 BOM: Windows PowerShell 5.1 Türkçe karakteri doğru okusun) yazıp çalıştırır.</summary>
+        private static void RunPowerShell(string script, CancellationToken ct)
+        {
+            var exe = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+            if (!File.Exists(exe)) throw new FileNotFoundException("powershell.exe bulunamadı", exe);
+            var file = Path.Combine(Path.GetTempPath(), $"rbox-fw-{Guid.NewGuid():N}.ps1");
+            File.WriteAllText(file, script, new UTF8Encoding(true));
+            try { RunElevated(exe, $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{file}\"", ct); }
+            finally { try { File.Delete(file); } catch { } }
+        }
+
+        private static void RunElevated(string fileName, string arguments, CancellationToken ct)
         {
             bool admin = IsAdmin();
-            var psi = new ProcessStartInfo
-            {
-                FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-                Arguments = $"/d /c call \"{scriptFile}\"",
-            };
+            var psi = new ProcessStartInfo { FileName = fileName, Arguments = arguments };
             if (admin)
             {
                 psi.UseShellExecute = false;
@@ -215,9 +328,9 @@ namespace RboxAgent.Modules.Port
                 psi.Verb = "runas";
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
             }
-            using var p = Process.Start(psi) ?? throw new InvalidOperationException("cmd.exe başlatılamadı.");
+            using var p = Process.Start(psi) ?? throw new InvalidOperationException(Path.GetFileName(fileName) + " başlatılamadı.");
             using var reg = ct.Register(() => { try { p.Kill(); } catch { } });
-            if (!p.WaitForExit(120_000)) { try { p.Kill(); } catch { } throw new TimeoutException("netsh 2 dakikada bitmedi."); }
+            if (!p.WaitForExit(120_000)) { try { p.Kill(); } catch { } throw new TimeoutException(Path.GetFileName(fileName) + " 2 dakikada bitmedi."); }
         }
     }
 
@@ -227,7 +340,17 @@ namespace RboxAgent.Modules.Port
         public string Profiles { get; set; } = "";
         public bool ActiveProfileOff { get; set; }
         public string Error { get; set; } = "";
+        /// <summary>Etki alanı / Özel / Genel: güvenlik duvarı açık mı, etkin ağ bu mu (başlıktaki rozetler).</summary>
+        public List<FwProfile> ProfileList { get; set; } = new();
         public List<FwPortStatus> Ports { get; set; } = new();
+    }
+
+    public sealed class FwProfile
+    {
+        public string Name { get; set; } = "";
+        public bool On { get; set; }
+        public bool Active { get; set; }
+        public string Tooltip => $"{Name}: güvenlik duvarı {(On ? "açık" : "KAPALI")}{(Active ? " · etkin ağ" : "")}";
     }
 
     public sealed class FwPortStatus
@@ -240,6 +363,12 @@ namespace RboxAgent.Modules.Port
         /// <summary>"RasyoBOX TCP &lt;port&gt;" kuralı var mı (etkin olsun olmasın).</summary>
         public bool Own { get; set; }
         public bool OwnEnabled { get; set; }
+        /// <summary>"RasyoBOX TCP &lt;port&gt;" kuralının açıklaması (kural yoksa boş).</summary>
+        public string OwnDescription { get; set; } = "";
+        /// <summary>Bu bilgisayarda portu TCP'de dinleyen bir uygulama var mı.</summary>
+        public bool Listening { get; set; }
+        /// <summary>Dinleyen süreç(ler), ör. "sqlservr.exe".</summary>
+        public string ListenProcess { get; set; } = "";
         public List<FwRuleRef> Rules { get; set; } = new();
 
         public string Tooltip
@@ -262,6 +391,11 @@ namespace RboxAgent.Modules.Port
                       .Append(r.Program.Length > 0 ? ", program: " + r.Program : "")
                       .Append(", profil: ").Append(r.Profiles);
                 if (Rules.Count > 8) sb.Append('\n').Append($"… ve {Rules.Count - 8} kural daha");
+                if (OwnDescription.Length > 0) sb.Append('\n').Append("RasyoBOX kuralının açıklaması: ").Append(OwnDescription);
+                sb.Append('\n').Append(Listening
+                    ? $"Dinleyen uygulama: {(ListenProcess.Length > 0 ? ListenProcess : "var")}"
+                    : "Bu portu dinleyen uygulama yok: izin verilse de bağlantı kurulamaz.");
+                sb.Append('\n').Append("Çift tık: bu portu soldaki sorguda aç · sağ tık: ad ver");
                 return sb.ToString();
             }
         }
@@ -270,6 +404,7 @@ namespace RboxAgent.Modules.Port
     public sealed class FwRuleRef
     {
         public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
         public bool Enabled { get; set; }
         public bool Allow { get; set; }
         public string Program { get; set; } = "";
@@ -280,6 +415,8 @@ namespace RboxAgent.Modules.Port
     {
         public bool Ok { get; set; }
         public string Message { get; set; } = "";
+        /// <summary>PowerShell kuralları oluşturamadı, netsh kullanıldı (açıklamadaki Türkçe harfler sadeleşir).</summary>
+        public bool UsedFallback { get; set; }
         public FwStatus? Status { get; set; }
     }
 }

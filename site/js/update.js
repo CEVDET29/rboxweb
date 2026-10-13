@@ -123,7 +123,7 @@ export function createUpdate(ctx) {
             <div class="row tight" style="justify-content:flex-end">
               <label class="chk" style="margin-right:auto" title="wlan0 ya da eth0 hücresine IP girince alttaki satırlar sıradaki IP'lerle dolar (.0 ve .255 atlanır).&#10;Elle girilmiş değerlere dokunulmaz; sıra orada durur. Otomatik doldurulan değerler soluk gösterilir."><input type="checkbox" id="uSeqFill"> IP'leri sıralı doldur</label>
               <input type="text" id="uNewIp" class="mono-input" placeholder="IP adresi" style="width:150px" autocomplete="off">
-              <button class="btn" id="uAdd">${ICONS.plus} Ekle</button>
+              <button class="btn ib" id="uAdd" title="Ekle · IP'yi listeye ekle">${ICONS.plus}</button>
               <button class="btn icon" id="uDelete" title="Seçili satırları sil (Delete)">${ICONS.trash}</button>
               <button class="btn icon" id="uToggleRooms" title="Tüm odaları daralt / genişlet">${ICONS.chevrons}</button>
               <span style="width:8px"></span>

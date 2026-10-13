@@ -14,7 +14,8 @@ const QUICK = [
 
 // Güvenlik duvarı kartında her zaman gösterilen portlar (ajandaki FirewallManager.DefaultPorts ile aynı)
 const FW_DEFAULT = [1433, 22, 8080, 8082, 8085, 6155, 8089, 9000, 9999, 9998, 9997];
-const FW_SEV = { allowed: "sev-ok", blocked: "sev-error", partial: "sev-warn", none: "sev-warn" };
+// Renk anlamı: yeşil = izinli, mavi = bilgi (programa özel / başka profil), kırmızı = yapılacak iş (kural yok / engelli)
+const FW_SEV = { allowed: "sev-ok", blocked: "sev-error", partial: "sev-info", none: "sev-error" };
 
 const EP_COLS = [
   { key: "protocol", label: "Protokol", w: 82 },
@@ -53,26 +54,29 @@ export function createPort() {
           <span class="spacer" style="flex:1"></span>
           <span class="sm muted" id="pState"></span>
         </div>
-        <div class="row tight" style="margin-top:12px"><span class="sm muted">Hızlı:</span><span class="chips" id="pQuick"></span></div>
-        <div class="row tight" style="margin-top:8px" id="pHistRow" hidden><span class="sm muted">Son sorgular:</span><span class="chips" id="pHist"></span></div>
+        <div class="row tight pchiprow" style="margin-top:12px"><span class="sm muted">Hızlı:</span><span class="chips" id="pQuick"></span></div>
+        <div class="row tight pchiprow" style="margin-top:8px" id="pHistRow" hidden><span class="sm muted">Son sorgular:</span><span class="chips" id="pHist"></span></div>
         <p class="sm muted" style="margin:10px 0 0">Ajanın çalıştığı bilgisayarda portu dinleyen uygulama, sürüm, hizmet, kullanıcı, bağlantılar ve güvenlik duvarı kuralları gösterilir.
           Uygulama adı girilirse (ör. sqlservr.exe) o uygulamanın dinlediği portlar gösterilir.</p>
       </div>
     </section>
     <section class="card">
-      <div class="card-h row" style="justify-content:space-between"><span>Güvenlik duvarı · port izni</span><span class="sm muted" id="fwState" style="text-transform:none;letter-spacing:0;font-weight:400"></span></div>
+      <div class="card-h row fwhead"><span>Güvenlik duvarı · port izni</span><span class="spacer"></span>
+        <span class="fwprofs" id="fwProf"></span>
+        <button class="btn icon" id="fwRefresh" title="Durumu yenile">${ICONS.redo}</button></div>
       <div class="card-b">
         <div class="fwgrid" id="fwPorts"></div>
-        <div class="row tight" style="margin-top:12px">
+        <div class="row tight fwbar">
           <label class="row tight" style="cursor:pointer"><input type="checkbox" id="fwAll"><span class="sm">Tümü</span></label>
-          <input type="text" id="fwAdd" placeholder="Port ekle" title="Listeye port ekle (1–65535), Enter" style="width:110px" inputmode="numeric" autocomplete="off" maxlength="5">
-          <button class="btn icon" id="fwAddBtn" title="Portu listeye ekle">${ICONS.plus}</button>
-          <span class="spacer"></span>
-          <button class="btn icon" id="fwRefresh" title="Durumu yenile">${ICONS.redo}</button>
-          <button class="btn" id="fwRemove" title="Seçili portların yalnızca 'RasyoBOX TCP &lt;port&gt;' kuralını siler">${ICONS.trash} Kuralı kaldır</button>
-          <button class="btn primary" id="fwAllow">${ICONS.check} <span id="fwAllowTxt">İzin ver</span></button>
+          <input type="text" id="fwAdd" placeholder="Port ekle" title="Listeye port ekle (1–65535), Enter" style="width:96px" inputmode="numeric" autocomplete="off" maxlength="5">
+          <input type="text" id="fwDesc" value="RasyoBOX" maxlength="200" autocomplete="off" class="fwdesc" placeholder="Açıklama (boşsa RasyoBOX)"
+                 aria-label="Açıklama" title="Açıklama: Windows Güvenlik Duvarı'nda kuralın açıklaması (boş bırakılırsa RasyoBOX). Var olan kuralda da güncellenir.">
+          <button class="btn fwsq" id="fwAddBtn" title="Portu listeye ekle (soldaki kutuya yazılan port; Enter da olur)" aria-label="Portu listeye ekle">${ICONS.plus}</button>
+          <button class="btn fwsq fwtrash" id="fwRemove" title="Kuralı kaldır: seçili portların yalnızca 'RasyoBOX TCP &lt;port&gt;' kuralını siler" aria-label="Kuralı kaldır">${ICONS.trash}</button>
+          <button class="btn primary fwallow" id="fwAllow">${ICONS.check} <span id="fwAllowTxt">İzin ver</span></button>
         </div>
-        <p class="sm muted" id="fwNote" style="margin:10px 0 0"></p>
+        <div class="fwsum" id="fwSum"></div>
+        <p class="sm" id="fwNote" style="margin:6px 0 0" hidden></p>
       </div>
     </section>
     </div>
@@ -92,8 +96,11 @@ export function createPort() {
     el.query.value = history[Number(b.dataset.i)]; run();
   });
   function renderHistory() {
-    el.histRow.hidden = history.length === 0;
-    el.hist.innerHTML = history.map((h, i) => `<button class="chip" data-i="${i}">${esc(h || "tümü")}</button>`).join("");
+    // Hızlı listede zaten olan sorgular tekrar gösterilmez
+    const quick = new Set(QUICK.map(([v]) => v));
+    const shown = history.map((h, i) => [h, i]).filter(([h]) => !quick.has(h));
+    el.histRow.hidden = shown.length === 0;
+    el.hist.innerHTML = shown.map(([h, i]) => `<button class="chip" data-i="${i}">${esc(h || "tümü")}</button>`).join("");
   }
   function remember(qq) {
     history = [qq, ...history.filter((x) => x !== qq)].slice(0, 8);
@@ -278,53 +285,66 @@ export function createPort() {
 
   // ── Güvenlik duvarı · port izni ─────────────────────────────
   const fw = { ports: q("fwPorts"), all: q("fwAll"), add: q("fwAdd"), addBtn: q("fwAddBtn"), refresh: q("fwRefresh"),
-               remove: q("fwRemove"), allow: q("fwAllow"), allowTxt: q("fwAllowTxt"), state: q("fwState"), note: q("fwNote") };
+               remove: q("fwRemove"), allow: q("fwAllow"), allowTxt: q("fwAllowTxt"), prof: q("fwProf"), sum: q("fwSum"),
+               note: q("fwNote"), desc: q("fwDesc") };
   let fwCustom = storeGet("rbox.fw.ports", "").split(",").map(Number).filter((p) => p > 0 && p <= 65535 && !FW_DEFAULT.includes(p));
+  let fwNames = {};                              // port → kullanıcının verdiği ad (sağ tık)
+  try { fwNames = JSON.parse(storeGet("rbox.fw.names", "{}")) || {}; } catch { fwNames = {}; }
   let fwStatus = null, fwBusy = false, fwLoaded = false;
-  const fwOff = new Set();                       // seçili olmayan portlar (varsayılan: hepsi seçili)
   const fwList = () => [...FW_DEFAULT, ...fwCustom];
-  const fwChecked = () => fwList().filter((p) => !fwOff.has(p));
+  // Seçili portlar. İlk okumada yalnızca "kural yok" olanlar seçilir (zaten izinli olana yeniden kural eklenmesin)
+  const fwSel = new Set();
+  const fwChecked = () => fwList().filter((p) => fwSel.has(p));
 
   function fwRender() {
     const byPort = new Map((fwStatus?.ports ?? []).map((x) => [x.port, x]));
     fw.ports.innerHTML = fwList().map((p) => {
       const s = byPort.get(p);
       const custom = !FW_DEFAULT.includes(p);
+      const on = fwSel.has(p);
       const badge = s ? `<span class="badge ${FW_SEV[s.state] ?? "sev-muted"}">${esc(s.label)}</span>` : `<span class="badge sev-muted">…</span>`;
-      return `<label class="fwt${fwOff.has(p) ? " off" : ""}" title="${esc(s ? s.tooltip : "")}">
-        <input type="checkbox" data-p="${p}"${fwOff.has(p) ? "" : " checked"}>
-        <span class="fwp"><b class="mono">${p}</b><small>${esc(s?.service || "TCP")}${s?.own ? " · RasyoBOX" : ""}</small></span>
+      const name = fwNames[p] || s?.service || "TCP";
+      const listen = !s ? "" : `<i class="ldot${s.listening ? " on" : ""}" title="${s.listening ? "Dinleyen: " + esc(s.listenProcess || "var") : "Dinleyen uygulama yok"}"></i>`;
+      return `<label class="fwt${on ? "" : " off"}" data-port="${p}" title="${esc(s ? s.tooltip : "Çift tık: bu portu soldaki sorguda aç · sağ tık: ad ver")}">
+        <input type="checkbox" data-p="${p}"${on ? " checked" : ""}>
+        <span class="fwp"><b class="mono">${p}${listen}</b><small>${esc(name)}${s?.own ? " · " + esc(s.ownDescription || "RasyoBOX") : ""}</small></span>
         ${badge}${custom ? `<button class="fwx" data-x="${p}" title="Listeden çıkar (kurala dokunmaz)">×</button>` : ""}
       </label>`;
     }).join("");
     const n = fwChecked().length, all = fwList().length;
     fw.all.checked = n === all; fw.all.indeterminate = n > 0 && n < all;
-    fw.allowTxt.textContent = n === all ? "İzin ver" : `İzin ver (${n})`;
+    fw.allowTxt.textContent = n === all || n === 0 ? "İzin ver" : `İzin ver (${n})`;
     fw.allow.disabled = fw.remove.disabled = fwBusy || n === 0;
     fw.refresh.disabled = fwBusy;
-    if (fwStatus) {
-      fw.state.textContent = fwStatus.error ? "" : fwStatus.profiles;
-      fw.state.className = fwStatus.activeProfileOff ? "sm txt-error" : "sm muted";
-    }
+    fw.allow.title = "Seçili portlara tüm ağ profillerinde gelen TCP izni ('RasyoBOX TCP <port>' kuralı, yazdığınız açıklamayla)"
+      + (fwStatus && !fwStatus.isAdmin ? " · Windows yönetici izni (UAC) istenecek" : "");
+
+    // Başlık: profil rozetleri (yeşil açık, kırmızı kapalı; etkin ağ vurgulu)
+    fw.prof.innerHTML = (fwStatus?.profileList ?? []).map((x) =>
+      `<span class="fwpill${x.on ? " on" : ""}${x.active ? " active" : ""}" title="${esc(x.name)}: güvenlik duvarı ${x.on ? "açık" : "KAPALI"}${x.active ? " · etkin ağ" : ""}"><i></i>${esc(x.name)}</span>`).join("");
+
+    // Özet: renkli sayım; etkin ağda güvenlik duvarı kapalıysa kırmızı uyarı
+    if (!fwStatus || fwStatus.error) { fw.sum.innerHTML = fwStatus?.error ? `<span class="txt-error">${esc(fwStatus.error)}</span>` : ""; return; }
+    const cnt = (st) => fwStatus.ports.filter((x) => st.includes(x.state)).length;
+    const parts = [[cnt(["allowed"]), "izinli", "ok"], [cnt(["partial"]), "programa özel / başka profil", "info"],
+                   [cnt(["blocked"]), "engelli", "error"], [cnt(["none"]), "kural yok", "error"]]
+      .filter(([c]) => c > 0).map(([c, t, k]) => `<span class="fwc ${k}"><i></i><b>${c}</b> ${t}</span>`);
+    const listening = fwStatus.ports.filter((x) => x.listening).length;
+    parts.push(`<span class="fwc muted" title="Bu bilgisayarda portu dinleyen bir uygulama olanlar"><i class="ldot on"></i><b>${listening}</b> dinleniyor</span>`);
+    fw.sum.innerHTML = (fwStatus.activeProfileOff ? `<span class="txt-error">Etkin ağda güvenlik duvarı KAPALI: portlar şu an engellenmiyor.</span>` : "") + parts.join("");
   }
 
-  function fwSetNote(text, cls = "muted") { fw.note.className = "sm " + cls; fw.note.textContent = text; }
-  function fwDefaultNote() {
-    if (!fwStatus) return;
-    if (fwStatus.error) return fwSetNote(fwStatus.error, "txt-error");
-    const base = "Seçili portlar için tüm ağ profillerinde gelen TCP bağlantısına izin veren 'RasyoBOX TCP <port>' kuralı eklenir.";
-    fwSetNote(fwStatus.activeProfileOff ? "Etkin ağda güvenlik duvarı KAPALI: portlar şu an engellenmiyor. " + base
-      : fwStatus.isAdmin ? base : base + " Ajan yönetici olarak çalışmadığı için Windows yönetici izni (UAC) soracak.",
-      fwStatus.activeProfileOff ? "txt-error" : "muted");
-  }
+  /** İşlem sonucu / ilerleme satırı (boşsa gizli). */
+  function fwSetNote(text, cls = "muted") { fw.note.hidden = !text; fw.note.className = "sm " + cls; fw.note.textContent = text || ""; }
 
   async function fwLoad() {
     if (fwBusy) return;
     fwBusy = true; fwRender();
     try {
       fwStatus = await api("/api/firewall/status", { method: "POST", body: { ports: fwList() } });
+      if (!fwLoaded) { fwSel.clear(); fwStatus.ports.filter((x) => x.state === "none").forEach((x) => fwSel.add(x.port)); }
       fwLoaded = true;
-      fwDefaultNote();
+      fwSetNote("");
     } catch (e) {
       fwSetNote(e.message, "txt-error");
     } finally {
@@ -341,14 +361,16 @@ export function createPort() {
       ? "Windows yönetici izni bekleniyor… UAC penceresi görünmüyorsa görev çubuğunda yanıp sönen kalkan simgesine tıklayın."
       : "Güvenlik duvarı güncelleniyor…");
     try {
-      const r = await api("/api/firewall/" + kind, { method: "POST", body: { ports } });
+      const body = kind === "allow" ? { ports, description: fw.desc.value.trim() || "RasyoBOX" } : { ports };
+      const r = await api("/api/firewall/" + kind, { method: "POST", body });
       if (r.status) {
         // Yanıt yalnızca seçili portları içerir: diğer portların durumu korunur
         const map = new Map((fwStatus?.ports ?? []).map((x) => [x.port, x]));
         r.status.ports.forEach((x) => map.set(x.port, x));
-        fwStatus = { ...r.status, ports: [...map.values()] };
+        fwStatus = { ...r.status, ports: fwList().map((p) => map.get(p)).filter(Boolean) };
       }
-      fwSetNote(r.message, r.ok ? "txt-ok" : "txt-error");
+      fwSetNote(r.message + (r.usedFallback ? " (PowerShell kullanılamadı; netsh ile eklendi, açıklamadaki Türkçe harfler sadeleşti.)" : ""),
+        r.ok ? "txt-ok" : "txt-error");
       toast(r.message, 4000);
     } catch (e) {
       fwSetNote(e.message, "txt-error");
@@ -361,7 +383,7 @@ export function createPort() {
     const p = Number(fw.add.value.trim());
     if (!Number.isInteger(p) || p < 1 || p > 65535) { toast("Port 1–65535 arasında olmalı."); return; }
     fw.add.value = "";
-    fwOff.delete(p);
+    fwSel.add(p);
     if (!fwList().includes(p)) {
       fwCustom.push(p);
       storeSet("rbox.fw.ports", fwCustom.join(","));
@@ -370,28 +392,51 @@ export function createPort() {
     fwRender();
   }
 
+  function fwRename(p) {
+    const cur = fwNames[p] || "";
+    const v = prompt(`Port ${p} için ad (ör. HL7 sunucusu). Boş bırakılırsa ad silinir.`, cur);
+    if (v === null) return;
+    const t = v.trim().slice(0, 40);
+    if (t) fwNames[p] = t; else delete fwNames[p];
+    storeSet("rbox.fw.names", JSON.stringify(fwNames));
+    fwRender();
+  }
+
   fw.ports.addEventListener("click", (e) => {
     const x = e.target.closest("[data-x]");
     if (!x) return;
     e.preventDefault();
     const p = Number(x.dataset.x);
-    fwCustom = fwCustom.filter((v) => v !== p); fwOff.delete(p);
+    fwCustom = fwCustom.filter((v) => v !== p); fwSel.delete(p);
     storeSet("rbox.fw.ports", fwCustom.join(","));
     fwRender();
   });
   fw.ports.addEventListener("change", (e) => {
     const cb = e.target.closest("input[data-p]"); if (!cb) return;
     const p = Number(cb.dataset.p);
-    cb.checked ? fwOff.delete(p) : fwOff.add(p);
+    cb.checked ? fwSel.add(p) : fwSel.delete(p);
     fwRender();
+  });
+  // Çift tık: portu soldaki sorguda aç (iki tık seçimi iki kez değiştirir, sonuç aynı kalır)
+  fw.ports.addEventListener("dblclick", (e) => {
+    const t = e.target.closest("[data-port]"); if (!t || e.target.closest("[data-x]")) return;
+    e.preventDefault();
+    el.query.value = t.dataset.port; run();
+  });
+  // Sağ tık: porta ad ver
+  fw.ports.addEventListener("contextmenu", (e) => {
+    const t = e.target.closest("[data-port]"); if (!t) return;
+    e.preventDefault();
+    fwRename(Number(t.dataset.port));
   });
   fw.all.addEventListener("change", () => {
     // Karışık durumda tıklama hepsini seçer (Ping tablosundaki gibi)
-    if (fwChecked().length === fwList().length) fwList().forEach((p) => fwOff.add(p)); else fwOff.clear();
+    if (fwChecked().length === fwList().length) fwSel.clear(); else fwList().forEach((p) => fwSel.add(p));
     fwRender();
   });
   fw.add.addEventListener("beforeinput", (e) => { if (e.data && /\D/.test(e.data)) e.preventDefault(); });
   fw.add.addEventListener("keydown", (e) => { if (e.key === "Enter") fwAddPort(); });
+  fw.desc.addEventListener("keydown", (e) => { if (e.key === "Enter" && !fw.allow.disabled) fwAct("allow"); });
   fw.addBtn.addEventListener("click", fwAddPort);
   fw.refresh.addEventListener("click", fwLoad);
   fw.allow.addEventListener("click", () => fwAct("allow"));

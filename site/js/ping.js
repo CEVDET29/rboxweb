@@ -121,7 +121,7 @@ export function createPing(ctx) {
       <div class="lp-con" id="lpCon"></div>
       <div class="lp-add">
         <input type="text" id="lpNew" placeholder="Başka IP / ad…" autocomplete="off">
-        <button class="btn mini" id="lpAdd">${ICONS.plus} Ekle</button>
+        <button class="btn mini ib" id="lpAdd" title="Ekle · IP / adı izlemeye ekle (Enter)">${ICONS.plus}</button>
       </div>
     </aside>
     </div>`;

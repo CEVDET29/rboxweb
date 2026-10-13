@@ -37,11 +37,18 @@ $fv = [version](Get-Item -LiteralPath (Join-Path $out "RasyoBOX Araclari.exe")).
 $ver = "$($fv.Major).$($fv.Minor).$([math]::Max(0, $fv.Build))"
 $name = "RboxTools-desktop-$ver.zip"
 
-# Eski zip'ler (surumsuz ya da baska surumlu) karismasin diye silinir
+# Eski surumlu zip'ler silinmez, karismasin diye ayni yerdeki "eski-surumler" klasorune tasinir
+# (dist\eski-surumler, dist\public\eski-surumler). Ayni surum yeniden derlenirse onun zip'i yenisiyle degisir.
 $pubDir = Join-Path $web 'dist\public'
 New-Item -ItemType Directory -Force $pubDir | Out-Null
 foreach ($d in (Join-Path $web 'dist'), $pubDir) {
-    Get-ChildItem -LiteralPath $d -File -Filter 'RboxTools-desktop*.zip' | Remove-Item -Force
+    foreach ($old in Get-ChildItem -LiteralPath $d -File -Filter 'RboxTools-desktop*.zip') {
+        if ($old.Name -eq $name) { Remove-Item -LiteralPath $old.FullName -Force; continue }
+        $arc = Join-Path $d 'eski-surumler'
+        New-Item -ItemType Directory -Force $arc | Out-Null
+        Move-Item -LiteralPath $old.FullName -Destination (Join-Path $arc $old.Name) -Force
+        Write-Host "Eski surum tasindi: $(Join-Path $arc $old.Name)"
+    }
 }
 
 $zip = Join-Path $web "dist\$name"

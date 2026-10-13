@@ -196,6 +196,7 @@ function enterApp() {
 
 function select(id) {
   const m = MODULES.find((x) => x.id === id);
+  if (current && current !== id) views[current]?.onHide?.();
   current = id;
   storeSet("rbox.module", id);
   $$tabs().forEach((t) => t.setAttribute("aria-selected", String(t.dataset.m === id)));

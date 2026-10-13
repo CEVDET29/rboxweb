@@ -6,6 +6,7 @@ using System.Text.Json;
 using RboxAgent.Modules.Ping;
 using RboxAgent.Modules.Control;
 using RboxAgent.Modules.Files;
+using RboxAgent.Modules.Hl7;
 using RboxAgent.Modules.Port;
 using RboxAgent.Modules.Tcp;
 using RboxAgent.Modules.Update;
@@ -224,7 +225,7 @@ namespace RboxAgent
                 {
                     var b = await Body<FwPortsIn>(req);
                     var ports = b.Ports ?? new List<int>();
-                    await Reply(res, path.EndsWith("/allow") ? await FirewallManager.AllowAsync(ports) : await FirewallManager.RemoveAsync(ports));
+                    await Reply(res, path.EndsWith("/allow") ? await FirewallManager.AllowAsync(ports, b.Description) : await FirewallManager.RemoveAsync(ports));
                     return;
                 }
 
@@ -657,7 +658,7 @@ namespace RboxAgent
                 case ("POST", "/api/tcp/start"):
                 {
                     var b = await Body<TcpStartIn>(req);
-                    var (ok, error, id) = TcpService.Start(b.Mode, b.Port, b.Bind, b.Hosts);
+                    var (ok, error, id) = TcpService.Start(b.Mode, b.Port, b.Bind, b.Hosts, b.Ack);
                     await Reply(res, ok ? new { ok, id } : new { ok, error }, ok ? 200 : 422);
                     return;
                 }
@@ -682,9 +683,22 @@ namespace RboxAgent
                 case ("POST", "/api/tcp/poll"):
                 {
                     var b = await Body<TcpPollIn>(req);
-                    await Reply(res, TcpService.Poll(b.Id, b.After));
+                    await Reply(res, TcpService.Poll(b.Id, b.After, b.Hex ?? true, b.AckAfter));
                     return;
                 }
+
+                // HL7 onayı (ACK): açıkken ajan gelen her HL7 mesajına anında MLLP onayı yazar
+                case ("POST", "/api/tcp/ack"):
+                {
+                    var b = await Body<TcpAckIn>(req);
+                    await Reply(res, new { ok = TcpService.SetAck(b.Id, b.On) });
+                    return;
+                }
+
+                // HL7 cihaz profilleri: bu bilgisayardaki kullanıcı profilleri (WPF ile ortak dosya); yerleşikler sayfada
+                case ("GET", "/api/hl7/profiles"):
+                    await Reply(res, Hl7ProfileFile.ReadUser());
+                    return;
             }
 
             await Reply(res, new { error = "Bulunamadı" }, 404);
@@ -692,11 +706,12 @@ namespace RboxAgent
 
         private sealed class IpIn { public string? Ip { get; set; } }
         private sealed class PortQueryIn { public string? Query { get; set; } public string? Host { get; set; } }
-        private sealed class FwPortsIn { public List<int>? Ports { get; set; } }
+        private sealed class FwPortsIn { public List<int>? Ports { get; set; } public string? Description { get; set; } }
         private sealed class LiveIdIn { public int Id { get; set; } }
-        private sealed class TcpStartIn { public string? Mode { get; set; } public int Port { get; set; } public string? Bind { get; set; } public List<string>? Hosts { get; set; } }
+        private sealed class TcpStartIn { public string? Mode { get; set; } public int Port { get; set; } public string? Bind { get; set; } public List<string>? Hosts { get; set; } public bool Ack { get; set; } }
         private sealed class TcpHostIn { public int Id { get; set; } public string? Host { get; set; } }
-        private sealed class TcpPollIn { public int Id { get; set; } public long After { get; set; } }
+        private sealed class TcpPollIn { public int Id { get; set; } public long After { get; set; } public bool? Hex { get; set; } public long AckAfter { get; set; } }
+        private sealed class TcpAckIn { public int Id { get; set; } public bool On { get; set; } }
         private sealed class CihazSaveIn { public CihazKaydi? Original { get; set; } public CihazKaydi? Changed { get; set; } }
         private sealed class CihazBulkIn { public List<CihazKaydi>? Rows { get; set; } }
         private sealed class LivePollIn { public Dictionary<string, long>? Cursors { get; set; } }
