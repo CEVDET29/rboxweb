@@ -536,7 +536,10 @@ tr.item.off td { opacity: .6; }
 .tcp-grid.json { grid-template-columns: 270px minmax(0, 1fr) minmax(0, 1fr); }
 @media (max-width: 1250px) { .tcp-grid, .tcp-grid.json { grid-template-columns: minmax(0, 1fr); } }
 .tcp-grid > * { min-width: 0; }
-.tcp-devlist { max-height: calc(100vh - 550px + var(--gain, 0px)); min-height: 160px; overflow: auto; display: grid; gap: 2px; align-content: start; }
+/* Cihaz kartı yanındaki kartla aynı boyda uzar (tam ekranda da); liste kartın kalanını doldurur, içeriği kartı büyütmez */
+.tcp-grid > .tcp-dev { align-self: stretch; display: flex; flex-direction: column; }
+.tcp-dev > .card-b { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.tcp-devlist { flex: 1 1 auto; contain: size; min-height: 160px; overflow: auto; display: grid; gap: 2px; align-content: start; }
 .tcp-devrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-radius: 8px;
   border: 1px solid transparent; cursor: pointer; }
 .tcp-devrow:hover { background: var(--hover); }
@@ -687,7 +690,7 @@ tr.item.off td { opacity: .6; }
 .h7-detail { display: grid; grid-template-columns: minmax(220px, 3fr) minmax(0, 7fr); gap: 16px; align-items: start; }
 @media (max-width: 1250px) { .h7-detail { grid-template-columns: minmax(0, 1fr); } }
 .h7-detail > *, .h7-wsingle > * { min-width: 0; }
-.h7-list { height: calc(100vh - 470px + var(--gain, 0px)); min-height: 320px; overflow: auto; display: grid; gap: 2px; align-content: start; outline: none; }
+.h7-list { height: calc(100vh - 430px + var(--gain, 0px)); min-height: 320px; overflow: auto; display: grid; gap: 2px; align-content: start; outline: none; }
 .h7-msg { padding: 7px 10px; border-radius: 8px; border: 1px solid transparent; cursor: pointer; min-width: 0; }
 .h7-msg:hover { background: var(--hover); }
 .h7-msg[aria-selected="true"] { background: var(--accent-subtle); border-color: var(--accent); }
@@ -701,7 +704,7 @@ tr.item.off td { opacity: .6; }
 .h7-ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .h7-sum { color: var(--text-2); font-size: 11.5px; margin-top: 2px; }
 .h7-empty { color: var(--text-muted); padding: 8px 4px; font-size: 12.5px; }
-.h7-pane { height: calc(100vh - 470px + var(--gain, 0px)); min-height: 320px; overflow: auto; }
+.h7-pane { height: calc(100vh - 430px + var(--gain, 0px)); min-height: 320px; overflow: auto; }
 .h7-dhead { display: flex; align-items: flex-end; gap: 12px; justify-content: space-between; }
 .h7-dtitle { font-size: 19px; font-weight: 600; line-height: 1.3; min-width: 0; }
 .h7-parts { font-size: 13px; font-weight: 400; }
@@ -722,11 +725,12 @@ tr.item.off td { opacity: .6; }
 .h7-raw { margin: 0; padding: 10px 12px; border-radius: 8px; background: #0C0C0C; color: #E6EDF3; font: 12px/1.5 Consolas, "Cascadia Mono", monospace;
   white-space: pre-wrap; word-break: break-all; max-height: calc(100vh - 660px + var(--gain, 0px)); min-height: 140px; overflow: auto; }
 .h7-raw.h7-ack { min-height: 0; max-height: 90px; }
-.h7-tablewrap { max-height: calc(100vh - 470px + var(--gain, 0px)); min-height: 320px; border: 1px solid var(--border); border-radius: 8px; }
+.h7-tablewrap { height: calc(100vh - 430px + var(--gain, 0px)); max-height: none; min-height: 320px; border: 1px solid var(--border); border-radius: 8px; }
 .h7-tablewrap td.h7-warn, .h7-tablewrap td.h7-error { color: var(--warn-text); font-weight: 600; }
 .h7-tablewrap td.h7-error { color: var(--error-text); }
+#h7Beds.h7-tablewrap { height: calc(100vh - 480px + var(--gain, 0px)); }
 /* Dalgalar: temadan bağımsız koyu monitör zemini */
-.h7-wscroll { height: calc(100vh - 470px + var(--gain, 0px)); min-height: 320px; overflow: auto; }
+.h7-wscroll { height: calc(100vh - 430px + var(--gain, 0px)); min-height: 320px; overflow: auto; }
 .h7-wgh { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--section); margin: 4px 0 8px 2px; }
 .h7-wcards { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
 .h7-wcard { width: 430px; max-width: 100%; padding: 10px 12px; border-radius: 10px; background: #0B1015; border: 1px solid #1F2937; cursor: pointer; }
@@ -741,10 +745,20 @@ tr.item.off td { opacity: .6; }
 .h7-wsingle { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; align-items: start; }
 @media (max-width: 1250px) { .h7-wsingle { grid-template-columns: minmax(0, 1fr); } }
 .h7-wchips { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 11px; margin-top: 3px; }
-.h7-monitor { background: #0B1015; border-radius: 10px; padding: 10px 14px; height: calc(100vh - 520px + var(--gain, 0px)); min-height: 280px; overflow: auto; }
+.h7-monitor { background: #0B1015; border-radius: 10px; padding: 10px 14px; height: calc(100vh - 500px + var(--gain, 0px)); min-height: 280px; overflow: auto; }
 .h7-wrow.big { grid-template-columns: 170px minmax(0, 1fr); margin: 4px 0; }
 .h7-wrow.big b { font-size: 13px; }
 .h7-wrow.big .h7-wnum { font-size: 16px; margin-top: 4px; }
 .h7-winfo { color: #94A3B8; font-size: 11px; }
 .h7-wrow.big .h7-wave { height: 86px; }
 .h7-empty.light { color: var(--text-muted); }
+
+/* Sürüklenebilir sütun ayracı (util.js columnSplitter; WPF ColumnSplitter) */
+.vsplit { cursor: col-resize; display: grid; place-items: center; touch-action: none; user-select: none; }
+.vsplit::before { content: ""; width: 4px; height: 44px; border-radius: 2px; background: var(--border-strong); }
+.vsplit:hover::before, .vsplit.drag::before { background: var(--accent); }
+.ybdb-grid.split { grid-template-columns: var(--split-left, minmax(0, 5fr)) 16px minmax(0, 7fr); gap: 0; }
+.h7-detail.split { grid-template-columns: var(--split-left, minmax(220px, 3fr)) 16px minmax(0, 7fr); gap: 0; }
+@media (max-width: 1100px) { .ybdb-grid.split { grid-template-columns: minmax(0, 1fr); gap: 16px; } .ybdb-grid .vsplit { display: none; } }
+@media (max-width: 1250px) { .h7-detail.split { grid-template-columns: minmax(0, 1fr); gap: 16px; } .h7-detail .vsplit { display: none; } }
+.ybdb-grid > *, .h7-detail > * { min-width: 0; }

@@ -2,7 +2,7 @@
 // gelen veriden çözülen HL7 v2 mesajları. Dört görünüm: Mesajlar (liste + ayrıntı), Tablo (mesaj başına satır),
 // Yataklar (yatak başına satır, yeni veri gelince güncellenir) ve Dalgalar (canlı dalga formları, merkezi monitör gibi).
 // Mesajları tcp.js ekler (bağlantı başına birleştirilmiş veri); yandaki cihaz süzgecini de o verir (setFilter).
-import { $, $$, esc, storeGet, storeSet, sortCompare, copyText, toast, ICONS } from "./util.js";
+import { $, $$, esc, storeGet, storeSet, sortCompare, copyText, toast, columnSplitter, ICONS } from "./util.js";
 import { buildMessage, segmentRows, buildAck, isWaveMessage, fmtTr } from "./hl7core.js";
 
 const MAX_MESSAGES = 2000;
@@ -317,6 +317,7 @@ export function createHl7Panel(opts = {}) {
       </div>
     </div>`;
   const q = (id) => $("#" + id, root);
+  columnSplitter($(".h7-detail", root), "rbox.hl7.split", { min: 200, minRight: 360 });
   const el = {
     list: q("h7List"), detail: q("h7Detail"), tabs: q("h7Tabs"), table: q("h7Table"), beds: q("h7Beds"),
     tStatus: q("h7TStatus"), bStatus: q("h7BStatus"), wGrid: q("h7WGrid"), wCards: q("h7WCards"), wCount: q("h7WCount"),

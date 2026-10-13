@@ -1,6 +1,6 @@
 // YBDB Odalar modülü: SQL Server'daki oda / yatak kayıtları ve doluluk (salt okunur). WPF YbdbView karşılığı.
 import { api } from "./api.js";
-import { $, esc, debounce, toast, unitColor, sortCompare, ICONS } from "./util.js";
+import { $, esc, debounce, toast, unitColor, sortCompare, columnSplitter, ICONS } from "./util.js";
 import { createCihazEditor } from "./ybdbcihaz.js";
 
 const DASH = "—";
@@ -115,6 +115,7 @@ export function createYbdb() {
     <div id="yCihazView" hidden></div>`;
 
   const q = (id) => $("#" + id, root);
+  columnSplitter($(".ybdb-grid", root), "rbox.ybdb.split", { min: 300, minRight: 420 });
   const el = {
     server: q("yServer"), user: q("yUser"), pass: q("yPass"), remember: q("yRemember"),
     connect: q("yConnect"), refresh: q("yRefresh"), state: q("yState"), last: q("yLast"), err: q("yErr"),

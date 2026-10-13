@@ -200,3 +200,41 @@ export const ICONS = {
   down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>',
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
 };
+
+/**
+ * İki sütunlu ızgaranın arasına sürüklenebilir ayraç koyar (WPF ColumnSplitter gibi): sol sütunun genişliği
+ * sürükleyerek değişir, çift tıklayınca varsayılana döner, tarayıcıda hatırlanır (storeKey). Izgara tek sütuna
+ * indiğinde (dar ekran, CSS) ayraç gizlenir. Izgaraya "split" sınıfı eklenir; genişlik --split-left değişkeninde.
+ */
+export function columnSplitter(grid, storeKey, { min = 260, minRight = 360 } = {}) {
+  grid.classList.add("split");
+  const handle = document.createElement("div");
+  handle.className = "vsplit";
+  handle.title = "Sürükleyerek genişliği ayarlayın · çift tıklayınca varsayılan";
+  grid.firstElementChild.after(handle);
+  const apply = (px) => {
+    if (px == null) grid.style.removeProperty("--split-left");
+    // Pencere daralırsa sağ sütun en az minRight kalsın
+    else grid.style.setProperty("--split-left", `min(${Math.round(px)}px, calc(100% - ${minRight + 16}px))`);
+  };
+  const saved = Number(storeGet(storeKey));
+  if (saved > 0) apply(saved);
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    try { handle.setPointerCapture(e.pointerId); } catch { /* etkin işaretçi yok */ }
+    handle.classList.add("drag");
+    const left = grid.firstElementChild, start = e.clientX, w0 = left.getBoundingClientRect().width;
+    const total = grid.getBoundingClientRect().width;
+    const move = (ev) => apply(Math.min(Math.max(min, w0 + ev.clientX - start), total - minRight - handle.offsetWidth));
+    const up = () => {
+      handle.classList.remove("drag");
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      storeSet(storeKey, String(Math.round(left.getBoundingClientRect().width)));
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+  });
+  handle.addEventListener("dblclick", () => { apply(null); storeSet(storeKey, ""); });
+}
