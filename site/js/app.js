@@ -169,6 +169,7 @@ function enterApp() {
   $("#agentName").innerHTML = `${esc(agent.info.machine)} <b>· ajan ${esc(agent.info.version)}</b>`;
   $("#agentPill").title = `Ajan ${agent.info.version} · ${agent.info.machine}`;
   checkAgentVersion();
+  requestAnimationFrame(fitTabs);
   if (entered) return;
   entered = true;
 
@@ -190,6 +191,15 @@ function enterApp() {
   $("#tabs").innerHTML = MODULES.map((m) =>
     `<button class="tab${m.soon ? " soon" : ""}" role="tab" data-m="${m.id}" aria-selected="false" title="${m.soon ? "Bu modül sonraki aşamada eklenecek" : m.title}">${m.icon}<span>${m.tab ?? m.title}</span></button>`).join("");
   $("#tabs").addEventListener("click", (e) => { const t = e.target.closest("[data-m]"); if (t) select(t.dataset.m); });
+  // Sığmayan sekme şeridi fare tekerleğiyle yatay kayar
+  $("#tabs").addEventListener("wheel", (e) => {
+    const t = e.currentTarget;
+    if (!t.classList.contains("over") || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    t.scrollLeft += e.deltaY;
+    e.preventDefault();
+  }, { passive: false });
+  new ResizeObserver(() => fitTabs()).observe($(".topbar-row"));
+  window.addEventListener("resize", fitTabs);
 
   select(storeGet("rbox.module") in Object.fromEntries(MODULES.map((m) => [m.id, 1])) ? storeGet("rbox.module") : "ping");
 }
@@ -215,8 +225,29 @@ function select(id) {
   if (!v.root.parentElement) host.append(v.root);
   v.root.hidden = false;
   v.onShow?.();
+  fitTabs();
 }
 const $$tabs = () => [...document.querySelectorAll("#tabs .tab")];
+
+/**
+ * Sekmeleri üst banda sığdırır (ekran ölçüsüne göre değil, gerçekten sığıp sığmadığına bakarak): sığmadıkça sırayla
+ * seçili olmayanlar simgeye iner, ajan adı gizlenir, seçili sekme de simgeye iner; yine sığmazsa şerit kaydırılır.
+ */
+const FIT = ["fit-compact", "fit-pill", "fit-tiny"];
+function fitTabs() {
+  const row = $(".topbar-row"), t = $("#tabs");
+  if (!row || !t || $("#app").hidden) return;
+  const over = () => t.scrollWidth > t.clientWidth + 1;
+  row.classList.remove(...FIT);
+  for (const c of FIT) { if (!over()) break; row.classList.add(c); }
+  t.classList.toggle("over", over());
+  // Seçili sekme görünür kalsın
+  const s = t.querySelector('[aria-selected="true"]');
+  if (s && over()) {
+    if (s.offsetLeft < t.scrollLeft) t.scrollLeft = s.offsetLeft - 8;
+    else if (s.offsetLeft + s.offsetWidth > t.scrollLeft + t.clientWidth) t.scrollLeft = s.offsetLeft + s.offsetWidth - t.clientWidth + 8;
+  }
+}
 
 // ── Ortak SSH kullanıcı / şifre (tüm modüller) ───────────────
 // Tek yerde girilir; ajanda şifreli saklanır. Şifre tarayıcıya geri gönderilmez.
@@ -227,6 +258,7 @@ function renderSsh() {
   const btn = $("#btnSsh");
   btn.innerHTML = `${ICONS.lock}<span>${ssh.hasPass ? "SSH " + esc(ssh.user) : "SSH girilmedi"}</span>`;
   btn.classList.toggle("warn", !ssh.hasPass);
+  requestAnimationFrame(fitTabs);
 }
 
 async function loadSsh() {
@@ -382,7 +414,7 @@ async function checkSiteUpdate() {
   try {
     const v = await (await fetch(`version.json?t=${Date.now()}`, { cache: "no-store" })).json();
     if (v.commit && v.commit !== SITE.commit) {
-      $("#siteUpdate").hidden = false;
+      $("#siteUpdate").hidden = false; fitTabs();
       $("#siteUpdate").title = `Yeni arayüz yayınlandı (${v.date}). Tıklayınca sayfa yeniden yüklenir.`;
     }
   } catch { /* çevrimdışı / dosya yok */ }

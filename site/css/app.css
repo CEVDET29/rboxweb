@@ -148,9 +148,15 @@ button, input, select { font: inherit; color: inherit; }
 .tab.soon { opacity: .6; }
 .tab.soon[aria-selected="true"] { opacity: 1; }
 .agent-pill { flex: none; white-space: nowrap; }
-/* Dar ekranda (AnyDesk 1280/1366) 6 sekme sığsın: seçili olmayanlar yalnızca simge, adı ipucunda */
-@media (max-width: 1580px) { .tab { padding: 9px 10px; } .tab:not([aria-selected="true"]) span { display: none; } }
-@media (max-width: 1150px) { .agent-pill span { display: none; } }
+/* Sekmeler sığmazsa (app.js fitTabs, genişliğe göre ölçerek) sırayla: seçili olmayanlar yalnız simge (adı ipucunda) →
+   ajan adı gizlenir → seçili sekme de simge → yine sığmazsa ince kaydırma çubuğu (fare tekerleği de kaydırır) */
+.topbar-row.fit-compact .tab { padding: 9px 10px; }
+.topbar-row.fit-compact .tab:not([aria-selected="true"]) span { display: none; }
+.topbar-row.fit-pill .agent-pill span { display: none; }
+.topbar-row.fit-tiny .tab span { display: none; }
+.tabs.over { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.35) transparent; padding-bottom: 4px; }
+.tabs.over::-webkit-scrollbar { height: 5px; }
+.tabs.over::-webkit-scrollbar-thumb { background: rgba(255,255,255,.35); border: 0; }
 @media (max-width: 900px) { .topbar-row { flex-wrap: wrap; } }
 .spacer { flex: 1; }
 .hbtn {
