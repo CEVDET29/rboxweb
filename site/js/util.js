@@ -379,3 +379,21 @@ export function columnSplitter(grid, storeKey, { min = 260, minRight = 360 } = {
   });
   handle.addEventListener("dblclick", () => { apply(null); storeSet(storeKey, ""); });
 }
+
+// ── Ortak ızgara çizgileri (WPF Common/GridLines): bir modülde açılınca tüm tablolarda açılır ──
+const GRID_KEY = "rbox.upd.grid";
+const gridOn = () => storeGet(GRID_KEY) === "1";
+function applyGrid(on) {
+  document.documentElement.classList.toggle("gridlines", on);
+  document.querySelectorAll(".grid-toggle").forEach((b) => b.setAttribute("aria-pressed", String(on)));
+}
+/** Modül araç çubuğuna konan ızgara düğmesi (HTML). Tıklama tek yerden (aşağıda) yakalanır. */
+export const gridButton = (extra = "") =>
+  `<button class="btn icon grid-toggle ${extra}" aria-pressed="${gridOn()}" title="Izgara çizgilerini göster / gizle (tüm tablolarda)">${ICONS.grid}</button>`;
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".grid-toggle")) return;
+  const on = !gridOn();
+  storeSet(GRID_KEY, on ? "1" : "");
+  applyGrid(on);
+});
+applyGrid(gridOn());

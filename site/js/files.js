@@ -1,7 +1,7 @@
 // Dosyalar modülü: Cihaz Güncelleme'nin cihaza gönderdiği dosyalar (updateFiles) — listele, düzenle, yükle, indir, sil, zip.
 // Ortak paket GitHub'daki "updatefiles" sürümünden (updateFiles.zip) indirilir; klasör boşsa kendiliğinden, sonra düğmeyle.
 import { api, blob } from "./api.js";
-import { $, $$, esc, toast, ICONS } from "./util.js";
+import { $, $$, esc, toast, gridButton, ICONS } from "./util.js";
 
 const DASH = "—";
 
@@ -77,7 +77,7 @@ export function createFiles(ctx) {
     </section>
 
     <section class="card" id="fAllCard">
-      <div class="card-h row" style="justify-content:space-between">TÜM DOSYALAR <span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="fCount"></span></div>
+      <div class="card-h row" style="justify-content:space-between">TÜM DOSYALAR <span class="row" style="gap:10px"><span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="fCount"></span>${gridButton()}</span></div>
       <div class="card-b row" style="padding-bottom:8px">
         <button class="btn" id="fUpload">${ICONS.upload} Dosya yükle</button>
         <input type="text" id="fNewName" placeholder="yeni-dosya.txt" style="width:200px" autocomplete="off">

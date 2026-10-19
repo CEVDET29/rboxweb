@@ -4,7 +4,7 @@
 // HL7 görünümü (hl7.js): gelen veri tarayıcıda bağlantı başına HL7 mesajlarına çözülür; ACK açıksa onayı ajan gönderir.
 // Demo: ajan gömülü (anonimleştirilmiş) monitör / ventilatör / pompa kayıtlarını gerçek zamanlamasıyla oynatır.
 import { api } from "./api.js";
-import { $, $$, esc, storeGet, storeSet, toast, copyText, ipFilter, ICONS } from "./util.js";
+import { $, $$, esc, storeGet, storeSet, toast, copyText, ipFilter, gridButton, ICONS } from "./util.js";
 import { createHl7Panel } from "./hl7.js";
 import { Hl7Stream, parseHl7, importText, decodeFile, applyUserProfiles } from "./hl7core.js";
 
@@ -59,7 +59,7 @@ export function createTcp() {
   root.innerHTML = `
     <section class="card">
       <div class="card-h row" style="justify-content:space-between">TCP
-        <span class="tcp-state" id="tState"><i></i><span>Durduruldu</span></span></div>
+        <span class="row" style="gap:10px"><span class="tcp-state" id="tState"><i></i><span>Durduruldu</span></span>${gridButton()}</span></div>
       <div class="card-b">
         <!-- Tek satır: mod · bağlantı bilgileri · başlat/durdur | görünüm · kopyala · temizle (dar ekranda kayar) -->
         <div class="row tight">

@@ -1,6 +1,6 @@
 // YBDB Odalar modülü: SQL Server'daki oda / yatak kayıtları ve doluluk (salt okunur). WPF YbdbView karşılığı.
 import { api } from "./api.js";
-import { $, esc, debounce, toast, unitColor, sortCompare, columnSplitter, ICONS } from "./util.js";
+import { $, esc, debounce, toast, unitColor, sortCompare, columnSplitter, gridButton, ICONS } from "./util.js";
 import { createCihazEditor } from "./ybdbcihaz.js";
 
 const DASH = "—";
@@ -49,6 +49,7 @@ export function createYbdb() {
   root.innerHTML = `
     <section class="card">
       <div class="card-h row" style="justify-content:space-between">Bağlantı
+        <span class="spacer"></span>${gridButton()}
         <!-- Alt sekmeler: odalar / yataklar (salt okunur) ve Cihaz tablosu (düzenlenebilir) -->
         <div class="seg mini" role="tablist" id="ySeg">
           <button role="tab" data-ytab="oda" aria-selected="true">${ICONS.ybdb} Odalar ve yataklar</button>

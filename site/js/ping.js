@@ -1,6 +1,6 @@
 // Ping Kontrol modülü: Excel'deki cihazlara ping, SSH portu ve MAC kontrolü (WPF PingView karşılığı).
 import { api, stream } from "./api.js";
-import { $, $$, esc, debounce, toast, copyText, downloadCsv, sortCompare, ipFilter, ICONS } from "./util.js";
+import { $, $$, esc, debounce, toast, copyText, downloadCsv, sortCompare, ipFilter, gridButton, ICONS } from "./util.js";
 
 const ROOM_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6", "#EF4444", "#84CC16"];
 const DASH = "—";
@@ -78,7 +78,8 @@ export function createPing(ctx) {
         <!-- Başlat / CSV ve özet hapları (tıklanınca tabloyu filtreler); dar ekranda alt satıra kayar -->
         <div class="row tight">
           <button class="btn primary" id="pStart">${ICONS.play} <span>Kontrolü başlat</span></button>
-          <button class="btn" id="pExport" style="margin-right:12px">${ICONS.down} CSV</button>
+          <button class="btn" id="pExport">${ICONS.down} CSV</button>
+          ${gridButton()}<span style="margin-right:12px"></span>
           <span class="spills" id="pTiles"></span>
           <span class="spacer" style="flex:1"></span>
           <label class="chk"><input type="checkbox" id="oMonitor"> <span id="oMonitorText">İzleme modu</span></label>

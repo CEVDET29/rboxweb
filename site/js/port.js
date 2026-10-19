@@ -4,7 +4,7 @@
 // "Güvenlik duvarı · port izni" kartı ajandaki FirewallManager'ı kullanır: seçili TCP portları için
 // "RasyoBOX TCP <port>" gelen izin kuralı ekler / kaldırır (ajan yönetici değilse Windows UAC sorar).
 import { api } from "./api.js";
-import { $, esc, storeGet, storeSet, toast, sortCompare, ICONS } from "./util.js";
+import { $, esc, storeGet, storeSet, toast, sortCompare, gridButton, ICONS } from "./util.js";
 
 const DASH = "—";
 const QUICK = [
@@ -45,7 +45,7 @@ export function createPort() {
   root.innerHTML = `
     <div class="ptop">
     <section class="card">
-      <div class="card-h">Sorgu</div>
+      <div class="card-h row"><span>Sorgu</span><span class="spacer"></span>${gridButton()}</div>
       <div class="card-b">
         <div class="row" style="align-items:flex-end">
           <div><label class="field-label" for="pQuery">Port ya da uygulama</label>

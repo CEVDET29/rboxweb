@@ -1,7 +1,7 @@
 // Cihaz Güncelleme modülü: SSH ile toplu güncelleme, versiyon kontrolü, TTY mesajı ve tek cihaz ayarları.
 // WPF UpdateView / UpdateViewModel karşılığı. Adımların kendisi ajandadadır (UpdateCoordinator, WPF ile aynı kod).
 import { api, stream } from "./api.js";
-import { $, $$, esc, debounce, toast, copyText, ipFilter, sortCompare, storeGet, storeSet, ICONS } from "./util.js";
+import { $, $$, esc, debounce, toast, copyText, ipFilter, sortCompare, storeGet, storeSet, gridButton, ICONS } from "./util.js";
 
 const DASH = "—";
 
@@ -126,7 +126,7 @@ export function createUpdate(ctx) {
               <button class="btn ib" id="uAdd" title="Ekle · IP'yi listeye ekle">${ICONS.plus}</button>
               <button class="btn icon" id="uDelete" title="Seçili satırları sil (Delete)">${ICONS.trash}</button>
               <button class="btn icon" id="uToggleRooms" title="Tüm odaları daralt / genişlet">${ICONS.chevrons}</button>
-              <button class="btn icon" id="uGrid" aria-pressed="false" title="Izgara çizgilerini göster / gizle (sütun genişliği ayarlarken)">${ICONS.grid}</button>
+              ${gridButton()}
               <span style="width:8px"></span>
               <button class="link" id="uCheckAll">Tümünü işaretle</button>
               <button class="link" id="uUncheckAll" title="Tüm satırların işaretini kaldır">Temizle</button>
@@ -499,14 +499,6 @@ export function createUpdate(ctx) {
     if (e.key === "Delete" && !e.target.closest("input")) { e.preventDefault(); deleteSelected(); }
   });
 
-  // Izgara çizgileri (WPF ShowGridLines ile aynı): sütun sınırları görünür, tercih tarayıcıda saklanır
-  const setGrid = (on) => {
-    el.wrap.classList.toggle("gridlines", on);
-    q("uGrid").setAttribute("aria-pressed", String(on));
-    storeSet("rbox.upd.grid", on ? "1" : "");
-  };
-  setGrid(storeGet("rbox.upd.grid") === "1");
-  q("uGrid").addEventListener("click", () => setGrid(!el.wrap.classList.contains("gridlines")));
 
   q("uToggleRooms").addEventListener("click", () => {
     const anyOpen = rooms.some((r) => !r.collapsed);

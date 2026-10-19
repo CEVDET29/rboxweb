@@ -778,6 +778,7 @@ table.fixed[data-cols] > thead th:last-child { box-shadow: none; }
 .gridlines td:last-child { border-right: 0; }
 .gridlines th { box-shadow: inset -1px 0 0 var(--border-strong) !important; }
 .gridlines th:last-child { box-shadow: none !important; }
+.grid-toggle { flex: none; }
 .btn.icon[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-subtle); }
 
 /* Cihaz Kontrol kartı: işlemci değeri rengi ve HDMI satırı */
