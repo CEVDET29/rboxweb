@@ -278,10 +278,15 @@ const saveSsh = debounce(async () => {
   try {
     await api("/api/settings/ssh", { method: "PUT", body });
     ssh.user = body.user.trim() || "pi";
-    if (sshPassDirty) {
+    if (body.pass !== undefined) {
       ssh.hasPass = body.pass.length > 0;
-      $("#sshPass").value = ""; $("#sshPass").placeholder = ssh.hasPass ? "••••••••" : "";
-      sshPassDirty = false;
+      const f = $("#sshPass");
+      f.placeholder = ssh.hasPass ? "••••••••" : "";
+      // Kaydedilirken yazmaya devam edildiyse dokunma; yazılırken kutuyu boşaltma (yarım şifre sorunu)
+      if (f.value === body.pass) {
+        sshPassDirty = false;
+        if (document.activeElement !== f) f.value = "";
+      }
     }
     renderSsh();
   } catch (e) { toast("SSH bilgisi kaydedilemedi: " + e.message); }
@@ -289,6 +294,7 @@ const saveSsh = debounce(async () => {
 
 $("#sshUser").addEventListener("input", saveSsh);
 $("#sshPass").addEventListener("input", () => { sshPassDirty = true; saveSsh(); });
+$("#sshPass").addEventListener("blur", async () => { await saveSsh.flush(); if (!sshPassDirty) $("#sshPass").value = ""; });
 
 const sshPop = $("#sshPop");
 $("#btnSsh").addEventListener("click", (e) => {
