@@ -28,6 +28,10 @@ const FILTERS = [
 ];
 
 /** Satırın ekranda görünen hücresi (durum: bekliyor / çalışıyor / iptal / sonuç). */
+/** Hücre içi kopyala düğmesi; yalnızca geçerli MAC adresinde çıkar. */
+const copyBtn = (mac, act, title) => /^[0-9A-F]{2}([:-][0-9A-F]{2}){5}$/i.test(mac || "")
+  ? `<button class="copy-ip" data-act="${act}" title="${title}">${ICONS.copy}</button>` : "";
+
 function cell(r, col) {
   const R = r.res;
   switch (r.state) {
@@ -424,11 +428,11 @@ export function createPing(ctx) {
         <td>${esc(r.yatak) || DASH}</td>
         <td>${esc(r.yatakId) || DASH}</td>
         <td class="mono"><span class="ipcell">${esc(r.ip)}<button class="copy-ip" data-act="copy" title="IP adresini kopyala">${ICONS.copy}</button></span></td>
-        <td class="mono ${r.macInvalid ? "txt-error" : ""}" title="${r.macInvalid ? "Geçersiz MAC" : ""}">${esc(r.mac) || DASH}</td>
+        <td class="mono ${r.macInvalid ? "txt-error" : ""}" title="${r.macInvalid ? "Geçersiz MAC" : ""}"><span class="ipcell">${esc(r.mac) || DASH}${copyBtn(r.mac, "copyxmac", "Excel'deki MAC'i kopyala")}</span></td>
         <td>${badge(ping)}</td>
         <td>${badge(ssh)}</td>
         <td title="${esc(sshb.tip || "")}">${badge(sshb)}</td>
-        <td class="mono ${dm.sev === "error" ? "txt-error" : dm.sev === "muted" ? "txt-muted" : ""}">${esc(dm.text)}${dm.source ? `<span class="src">${dm.source}</span>` : ""}</td>
+        <td class="mono ${dm.sev === "error" ? "txt-error" : dm.sev === "muted" ? "txt-muted" : ""}"><span class="ipcell">${esc(dm.text)}${copyBtn(dm.text, "copydmac", "Cihaz MAC'ini kopyala")}</span>${dm.source ? `<span class="src">${dm.source}</span>` : ""}</td>
         <td class="${ven.sev === "warn" ? "" : ven.sev === "muted" ? "txt-muted" : ""}">${ven.sev === "warn" ? badge(ven) : esc(ven.text)}</td>
         <td>${badge(st)}${r.changed ? ' <span class="badge sev-warn" title="Önceki taramaya göre değişti">değişti</span>' : ""}</td>
         <td class="actions">
@@ -479,6 +483,11 @@ export function createPing(ctx) {
         const read = r.state === "pending" || r.state === "running" ? "" : r.res?.mac?.text;
         const mac = /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/i.test(read || "") ? read : (r.mac || "");
         if (!mac) { toast("Bu satırda MAC yok"); break; }
+        try { await copyText(mac); toast("MAC kopyalandı: " + mac); } catch { toast("Kopyalanamadı"); }
+        break;
+      }
+      case "copyxmac": case "copydmac": {
+        const mac = btn.dataset.act === "copyxmac" ? r.mac : cell(r, "mac").text;
         try { await copyText(mac); toast("MAC kopyalandı: " + mac); } catch { toast("Kopyalanamadı"); }
         break;
       }
