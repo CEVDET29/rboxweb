@@ -784,3 +784,19 @@ table.fixed[data-cols] > thead th:last-child { box-shadow: none; }
 .meterrow b.warn { color: var(--warn-text); } .meterrow b.error { color: var(--error-text); } .meterrow b.none { color: var(--text-muted); }
 .hdmirow { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
 .hdmirow .badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* SSH / SQL şifre kutuları: type="password" değil, yazı noktalarla gizlenir; tarayıcı "şifre kaydedilsin mi?" diye sormaz
+   (bu şifreler ajanda saklanır, tarayıcının şifre yöneticisine girmemeli). Giriş ekranındaki site şifresi normal kalır. */
+input.secret { -webkit-text-security: disc; text-security: disc; font-family: Consolas, "Cascadia Mono", monospace; letter-spacing: .08em; }
+input.secret::placeholder { letter-spacing: 0; }
+
+/* YBDB Cihazlar (WPF YbdbCihazPanel ile aynı): üç kart ekranın kalanını doldurur, düğmeler kartın altına sabit, alanlar kayar */
+.cz3 > .cz-card { display: flex; flex-direction: column; height: calc(100vh - 352px + var(--gain, 0px)); min-height: 440px; }
+.cz-card > .card-b.cz-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cz-body > .cz-form:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cz-scroll { flex: 1; min-height: 0; overflow: auto; padding-right: 4px; }
+.cz-foot { flex: none; margin-top: 12px; }
+.cz-card > .table-wrap.cz-table { flex: 1; min-height: 0; max-height: none; }
+@media (max-width: 1400px) { .cz3 > .cz-card { height: auto; min-height: 0; } .cz-card > .table-wrap.cz-table { max-height: calc(100vh - 360px + var(--gain, 0px)); } }
+.cz-side .cz-scroll > .field-label:first-child { margin-top: 0; }
+.wifi b svg { width: 15px; height: 15px; flex: none; }

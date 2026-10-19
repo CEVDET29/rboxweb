@@ -63,39 +63,39 @@ export function createCihazEditor({ getYataklar }) {
 
   root.innerHTML = `
     <!-- Sol: düzenleme formu -->
-    <section class="card cz-side">
+    <section class="card cz-side cz-card">
       <div class="card-h" id="czFormTitle">Cihaz</div>
-      <div class="card-b">
+      <div class="card-b cz-body">
         <p class="sm muted" id="czHint" style="margin:0">Düzenlemek için ortadaki tablodan bir cihaz seçin ya da "Yeni cihaz"a basın.</p>
-        <div id="czFields" hidden>
+        <div id="czFields" class="cz-form" hidden>
+          <div class="cz-scroll">
           <label class="field-label" for="czId">Id</label>
           <input type="text" id="czId" class="mono-input" style="width:100%" readonly>
           ${combo("czAdi", "Adi *", ADI_OPTS, { title: "Listeden tür seçince IP ve Port kendiliğinden dolar; başka ad da yazılabilir (boş olamaz)" })}
-          ${combo("czCts", "CTS", ["1"])}
-          <div class="row" style="gap:10px;flex-wrap:nowrap;align-items:flex-start">
-            <div style="flex:1">${combo("czIp", "IP", IP_OPTS, { mono: true })}</div>
-            <div style="width:120px">${combo("czPort", "Port", PORT_OPTS, { mono: true })}</div>
-          </div>
-          ${combo("czYatak", "YatakId", [], { mono: true, title: "1–999; boş bırakılabilir" })}
+          ${combo("czCts", "CTS", ["1"], { title: "Boş bırakılabilir" })}
+          ${combo("czIp", "IP", IP_OPTS, { mono: true, title: "Boş bırakılabilir" })}
+          ${combo("czPort", "Port", PORT_OPTS, { mono: true, title: "Boş bırakılabilir" })}
+          ${combo("czYatak", "YatakId", [], { mono: true, title: "1–999 arası sayı; boş bırakılabilir. Liste: YBDB'deki yatak Id'leri" })}
           <div class="sm muted" id="czYatakInfo" style="margin-top:4px;min-height:18px"></div>
           <div class="txt-error" id="czErr" style="margin-top:8px" hidden></div>
-          <div class="row" style="margin-top:14px">
-            <button class="btn primary" id="czSave">Kaydet</button>
+          </div>
+          <div class="row cz-foot">
+            <button class="btn primary" id="czSave" style="min-width:90px;justify-content:center"
+              title="Yalnızca bu beş alan yazılır; tablodaki diğer sütunlara dokunulmaz (yeni kayıtta boş kalır). Siz açtıktan sonra başkası bu satırı değiştirdiyse kayıt yapılmaz.">Kaydet</button>
             <button class="btn" id="czCancel">Vazgeç</button>
             <span class="spacer" style="flex:1"></span>
             <button class="btn danger" id="czDelete" title="Satırı veritabanından kalıcı olarak siler (DELETE)">${ICONS.trash} Sil</button>
           </div>
-          <p class="sm muted" style="margin:12px 0 0">Yalnızca bu beş alan yazılır; diğer sütunlara dokunulmaz (yeni kayıtta boş kalır).
-            Siz açtıktan sonra başkası satırı değiştirdiyse kayıt yapılmaz.</p>
         </div>
       </div>
     </section>
 
     <!-- Orta: tablo -->
-    <section class="card">
+    <section class="card cz-card">
       <div class="card-h row" style="justify-content:space-between">
-        <span>Cihaz tablosu <span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="czCount"></span></span>
+        <span>Cihaz tablosu</span>
         <span class="row tight" style="text-transform:none;letter-spacing:0;font-weight:500">
+          <span class="sm muted" id="czCount" style="margin-right:4px"></span>
           <button class="btn ib" id="czReload" title="Yenile · cihaz listesini veritabanından yeniden oku">${ICONS.redo}</button>
           <button class="btn primary" id="czNew">${ICONS.plus} Yeni cihaz</button>
         </span>
@@ -104,16 +104,17 @@ export function createCihazEditor({ getYataklar }) {
         <input type="search" id="czSearch" placeholder="Ara: ad, IP, port, yatak…" style="flex:1;min-width:180px">
         <label class="chk" title="Hastane yazılımının silindi olarak işaretlediği (SilinmeTarihi dolu) satırlar"><input type="checkbox" id="czDeleted"> Silinmiş işaretlileri göster</label>
       </div>
-      <div class="table-wrap" style="max-height:calc(100vh - 360px + var(--gain, 0px))"><table class="fixed" data-cols="ybdb-cihaz" style="min-width:560px">
+      <div class="table-wrap cz-table"><table class="fixed" data-cols="ybdb-cihaz" style="min-width:560px">
         <colgroup>${COLS.map((c) => `<col${c.w ? ` style="width:${c.w}px"` : ""}>`).join("")}</colgroup>
         <thead><tr id="czHead"></tr></thead><tbody id="czBody"></tbody></table></div>
     </section>
 
     <!-- Sağ: toplu ekle -->
-    <section class="card cz-side">
+    <section class="card cz-side cz-card">
       <div class="card-h">Toplu ekle</div>
-      <div class="card-b">
-        ${combo("bkAdi", "Adi *", ADI_OPTS, { title: "Listeden tür seçince IP ve Port dolar" })}
+      <div class="card-b cz-body">
+        <div class="cz-scroll">
+        ${combo("bkAdi", "Adi *", ADI_OPTS, { title: "Listeden bir tür seçince IP ve Port kendiliğinden doldurulur" })}
         ${combo("bkIp", "IP", IP_OPTS, { mono: true })}
         ${combo("bkPort", "Port", PORT_OPTS, { mono: true })}
         <div class="row" style="gap:16px;flex-wrap:nowrap;align-items:flex-start;margin-top:8px">
@@ -122,17 +123,20 @@ export function createCihazEditor({ getYataklar }) {
             <div class="row tight" style="flex-wrap:nowrap">
               <input type="text" id="bkFrom" class="mono-input" inputmode="numeric" style="width:60px" title="Başlangıç (1–999)">
               <span class="muted">–</span>
-              <input type="text" id="bkTo" class="mono-input" inputmode="numeric" style="width:60px" title="Bitiş (1–999)">
+              <input type="text" id="bkTo" class="mono-input" inputmode="numeric" style="width:60px" title="Bitiş (1–999, başlangıç dahil)">
             </div>
           </div>
-          <div style="flex:1">${combo("bkCts", "CTS", ["", "1"], { title: "Boş (varsayılan) ya da 1" })}</div>
+          <div style="flex:1">${combo("bkCts", "CTS", ["", "1"], { title: "Boş (NULL, varsayılan) ya da 1; başka değer de yazılabilir" })}</div>
         </div>
         <label class="chk" style="margin-top:12px" title="Aralıkta bu adla zaten kaydı olan yataklara ikinci kayıt eklenmez">
           <input type="checkbox" id="bkSkip" checked> Aynı adlı cihazı olan yatakları atla</label>
         <div class="sm muted" id="bkPreview" style="margin-top:12px;white-space:pre-line;min-height:18px"></div>
         <div class="txt-error" id="bkErr" style="margin-top:8px" hidden></div>
-        <button class="btn primary" id="bkAdd" style="margin-top:12px">${ICONS.plus} Toplu ekle</button>
-        <p class="sm muted" style="margin:10px 0 0">Hepsi tek işlemde eklenir: biri hata verirse hiçbiri eklenmez.</p>
+        </div>
+        <div class="cz-foot">
+          <button class="btn primary" id="bkAdd" style="min-width:120px">${ICONS.plus} Toplu ekle</button>
+          <p class="sm muted" style="margin:10px 0 0">Hepsi tek işlemde eklenir: biri hata verirse hiçbiri eklenmez.</p>
+        </div>
       </div>
     </section>`;
 
@@ -191,9 +195,9 @@ export function createCihazEditor({ getYataklar }) {
 
   function render() {
     el.head.innerHTML = COLS.map((c) => `<th data-k="${c.key}">${c.label}${sort.key === c.key ? `<span class="arr">${sort.dir > 0 ? "▲" : "▼"}</span>` : ""}</th>`).join("");
-    if (!loaded) { el.body.innerHTML = `<tr><td colspan="6" class="empty">Bağlandıktan sonra listelenir.</td></tr>`; el.count.textContent = ""; return; }
+    if (!loaded) { el.body.innerHTML = `<tr><td colspan="6" class="empty">Bağlandıktan sonra listelenir.</td></tr>`; el.count.textContent = "Bağlandıktan sonra listelenir"; return; }
     const v = visible(), ym = yatakMap(), del = list.filter((k) => k.silinmis).length;
-    el.count.textContent = `· ${v.length} / ${list.length}${del && !showDeleted ? ` (${del} silinmiş işaretli gizli)` : ""}`;
+    el.count.textContent = `${v.length} / ${list.length}${del && !showDeleted ? ` (${del} silinmiş işaretli gizli)` : ""}`;
     el.body.innerHTML = v.length ? v.map((k) => {
       const y = k.yatakId != null ? ym.get(String(k.yatakId)) : null;
       const yTip = k.yatakId == null ? "" : y ? `${y.odaAdi} · ${y.yatakAdi}` : "Bu YatakId Yatak tablosunda yok";

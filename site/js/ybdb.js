@@ -59,7 +59,7 @@ export function createYbdb() {
         <div class="row" style="align-items:flex-end">
           <div><label class="field-label" for="yServer">Sunucu</label><input type="text" id="yServer" style="width:220px" autocomplete="off"></div>
           <div><label class="field-label" for="yUser">Kullanıcı</label><input type="text" id="yUser" style="width:160px" autocomplete="off"></div>
-          <div><label class="field-label" for="yPass">Şifre</label><input type="password" id="yPass" style="width:170px" autocomplete="new-password"></div>
+          <div><label class="field-label" for="yPass">Şifre</label><input type="text" id="yPass" class="secret" style="width:170px" autocomplete="off" spellcheck="false" autocapitalize="off"></div>
           <label class="chk" style="height:34px" title="Şifre bu bilgisayarda ajan tarafından şifreli saklanır"><input type="checkbox" id="yRemember"> Şifreyi hatırla</label>
           <button class="btn primary" id="yConnect">Bağlan</button>
           <span class="spacer" style="flex:1"></span>

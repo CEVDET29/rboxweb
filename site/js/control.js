@@ -365,7 +365,7 @@ export function createControl(ctx) {
         <span class="sm muted" id="cNote"></span>
         <span class="spacer" style="flex:1"></span>
         <button class="btn" id="cRestartAll" title="Listedeki tüm cihazlarda serialworker.service'i yeniden başlatır (onay istenir)">${ICONS.term} SerialWorker'ı yeniden başlat (tümü)</button>
-        <button class="btn danger" id="cRebootAll" title="Listedeki tüm cihazları yeniden başlatır (onay istenir)">⏻ Tümünü yeniden başlat</button>
+        <button class="btn danger" id="cRebootAll" title="Listedeki tüm cihazları yeniden başlatır (onay istenir)">${ICONS.power} Tümünü yeniden başlat</button>
       </div>
       <div class="card-b row" style="padding-top:0">
         <span class="sm muted">Kartlar</span>
@@ -575,7 +575,7 @@ export function createControl(ctx) {
     h += `<hr><div class="tk">Ağ</div>`;
     if (!s?.hasNetInfo) h += `<div class="sm muted" style="margin-top:6px">Cihaza bağlanınca arayüz bilgileri (IP, ağ geçidi, MAC, Wi-Fi) burada görünür.</div>`;
     if (s?.hasWifi) {
-      h += `<div class="wifi"><div><b>📶 ${esc(s.ssid)}</b><div class="sm muted">${esc(s.signalText)}</div></div>
+      h += `<div class="wifi"><div><b class="row tight" style="gap:6px;flex-wrap:nowrap">${ICONS.wifi}${esc(s.ssid)}</b><div class="sm muted">${esc(s.signalText)}</div></div>
         <div class="sigbars">${[5, 8, 12, 16].map((px, i) => `<i style="height:${px}px" class="${i < s.signalBars ? "on" : ""}"></i>`).join("")}</div></div>`;
     }
     for (const n of s?.ifaces ?? []) h += ifaceHtml(n);
@@ -592,7 +592,7 @@ export function createControl(ctx) {
     if (!d.bedOnly) h += `
         <button class="btn mini" data-act="update" data-id="${d.id}" title="İlgili cihazı güncelle (Cihaz Güncelleme'ye geçer)">${ICONS.upload}</button>
         <button class="btn mini" data-act="restartSw" data-id="${d.id}" ${disabled} title="SerialWorker servisini yeniden başlat">${ICONS.term}</button>
-        <button class="btn mini" data-act="reboot" data-id="${d.id}" ${disabled} title="Cihazı yeniden başlat" style="color:var(--error-text)">⏻</button>
+        <button class="btn mini" data-act="reboot" data-id="${d.id}" ${disabled} title="Cihazı yeniden başlat" style="color:var(--error-text)">${ICONS.power}</button>
         <button class="btn mini ib" data-act="remove" data-id="${d.id}" ${disabled} title="Listeden kaldır (Excel dosyasına dokunulmaz)">${ICONS.trash}</button>`;
     return h + `</div></div>`;
   }
