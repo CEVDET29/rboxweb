@@ -112,7 +112,7 @@ namespace RboxAgent.Modules.Update
             try
             {
                 await log.LogAsync(ip, "Bağlanılıyor...");
-                try { client = await Task.Run(() => updater.Connect(8), ct); }
+                try { client = await updater.ConnectAsync(ct, 8); }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {

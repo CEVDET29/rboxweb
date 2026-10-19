@@ -143,6 +143,9 @@ namespace RboxAgent.Modules.Update.Services
             return (true, sbOut.ToString(), sbErr.ToString());
         }
         public SshClient Connect(int timeoutSeconds = 5)
+            => ConnectAsync(CancellationToken.None, timeoutSeconds).GetAwaiter().GetResult();
+
+        public async Task<SshClient> ConnectAsync(CancellationToken ct, int timeoutSeconds = 5)
         {
             var connInfo = new PasswordConnectionInfo(_ip, _user, _pass)
             {
@@ -150,27 +153,29 @@ namespace RboxAgent.Modules.Update.Services
             };
 
             var client = new SshClient(connInfo);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
 
             try
             {
-                client.Connect();
+                await client.ConnectAsync(timeout.Token).ConfigureAwait(false);
+                if (!client.IsConnected)
+                    throw new SshConnectionException("SSH bağlantısı kurulamadı.");
+
+                return client;
             }
-            catch (SshOperationTimeoutException ex)
+            catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
             {
                 client.Dispose();
-                // Zaman aşımını daha okunur bir hata olarak yukarı fırlatıyoruz
-                throw new SshConnectionException(
-                    $"SSH bağlantı zaman aşımına uğradı ({timeoutSeconds * 1000} ms).",
+                throw new SshOperationTimeoutException(
+                    $"SSH bağlantı zaman aşımına uğradı ({timeoutSeconds} sn).",
                     ex);
             }
-
-            if (!client.IsConnected)
+            catch
             {
                 client.Dispose();
-                //throw new SshConnectionException("Bağlantı kurulamadı (IsConnected=false).");
+                throw;
             }
-
-            return client;
         }
 
         /// <summary>

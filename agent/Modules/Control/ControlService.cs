@@ -36,6 +36,8 @@ namespace RboxAgent.Modules.Control
         /// Tek SSH oturumunda okunan istatistikler ("ANAHTAR=değer" satırları). sudo gerektirmez.
         /// Ağ: arayüz başına IP/CIDR, ağ geçidi, MAC, durum; varsayılan rota arayüzü; Wi-Fi SSID ve sinyal.
         /// USB: takılı USB seri aygıtlar (ttyUSB0/ttyUSB1…): VID:PID, üretici, ürün, fiziksel port.
+        /// İşlemci: /proc/stat 0,5 sn arayla (CPU, NCPU). HDMI: kablo durumu + monitör EDID'i (HDMI_…, TVS/TVN).
+        /// Komut WPF ControlViewModel.StatsCommand ile aynı tutulur.
         /// </summary>
         private const string StatsCommand =
             "PATH=$PATH:/sbin:/usr/sbin; " +
@@ -44,14 +46,26 @@ namespace RboxAgent.Modules.Control
             "free -m | awk '/^Mem:/{print \"MEM=\"$3\"/\"$2}'; " +
             "df -Pm / | awk 'NR==2{print \"DISK=\"$3\"/\"$2}'; " +
             "echo \"LOAD=$(cut -d' ' -f1 /proc/loadavg)\"; " +
+            // İşlemci kullanımı: /proc/stat iki kez (0,5 sn arayla); "toplam boşta" çiftleri, yüzde C# tarafında
+            "c1=$(awk '/^cpu /{t=0; for(i=2;i<=NF;i++) t+=$i; print t, $5+$6}' /proc/stat); sleep 0.5; " +
+            "c2=$(awk '/^cpu /{t=0; for(i=2;i<=NF;i++) t+=$i; print t, $5+$6}' /proc/stat); " +
+            "echo \"CPU=$c1 $c2\"; echo \"NCPU=$(nproc 2>/dev/null)\"; " +
             "echo \"SW=$(systemctl is-active serialworker.service 2>/dev/null)\"; " +
             "echo \"HOST=$(hostname)\"; " +
             "echo \"CARD=$(lsblk -bdno SIZE /dev/mmcblk0 2>/dev/null)\"; " +
+            // USB seri portlar (ttyUSB0/ttyUSB1…, ttyACM0…): sysfs'te USB aygıtına çıkılıp VID:PID, üretici, ürün ve
+            // fiziksel port okunur. lsusb gerekmez. Satır: USB_ttyUSB0=0403:6001|FTDI|FT232R USB UART|1-1.2
             "for t in /sys/class/tty/ttyUSB* /sys/class/tty/ttyACM*; do " +
             "[ -e \"$t\" ] || continue; n=${t##*/}; d=$(readlink -f \"$t/device\"); " +
             "while [ -n \"$d\" ] && [ \"$d\" != / ] && [ ! -f \"$d/idVendor\" ]; do d=$(dirname \"$d\"); done; " +
             "[ -f \"$d/idVendor\" ] && echo \"USB_$n=$(cat $d/idVendor):$(cat $d/idProduct)|$(cat $d/manufacturer 2>/dev/null)|$(cat $d/product 2>/dev/null)|${d##*/}\"; " +
             "done; " +
+            // HDMI: KMS sürücüsünde (Bookworm, vc4-kms-v3d) her bağlantı noktasının durumu ve monitörün EDID'i sysfs'te.
+            // Satır: HDMI_card1-HDMI-A-1=connected|<EDID base64>. Eski firmware sürücüsünde tvservice (-s durum, -n monitör adı).
+            "for s in /sys/class/drm/card*-HDMI-A-*; do [ -e \"$s/status\" ] || continue; " +
+            "echo \"HDMI_${s##*/}=$(cat \"$s/status\" 2>/dev/null)|$(base64 -w0 \"$s/edid\" 2>/dev/null)\"; done; " +
+            "TV=$(command -v tvservice || ls /opt/vc/bin/tvservice 2>/dev/null); " +
+            "if [ -n \"$TV\" ]; then echo \"TVS=$($TV -s 2>&1 | head -n1)\"; echo \"TVN=$($TV -n 2>&1 | head -n1)\"; fi; " +
             "for i in wlan0 eth0; do " +
             "echo \"${i}_MAC=$(cat /sys/class/net/$i/address 2>/dev/null)\"; " +
             "echo \"${i}_UP=$(cat /sys/class/net/$i/operstate 2>/dev/null)\"; " +

@@ -93,8 +93,8 @@ export function createYbdb() {
       <section class="card">
         <div class="card-h row" style="justify-content:space-between">ODALAR <span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="yOdaCount">Bağlandıktan sonra listelenir</span></div>
         <div class="card-b" style="padding-bottom:8px"><input type="search" id="yOdaSearch" placeholder="Oda ara: ad, bölüm, ID…" style="width:100%"></div>
-        <div class="table-wrap" style="max-height:calc(100vh - 380px + var(--gain, 0px))"><table class="fixed" style="min-width:420px">
-          <colgroup><col style="width:56px"><col><col style="width:110px"><col style="width:150px"></colgroup>
+        <div class="table-wrap" style="max-height:calc(100vh - 380px + var(--gain, 0px))"><table class="fixed" data-cols="ybdb-oda" style="min-width:466px">
+          <colgroup><col style="width:56px"><col><col style="width:140px"><col style="width:150px"></colgroup>
           <thead><tr id="yOdaHead"></tr></thead><tbody id="yOdaBody"></tbody></table></div>
       </section>
 
@@ -106,8 +106,8 @@ export function createYbdb() {
           <input type="search" id="yYatakSearch" placeholder="Yatak ara: hasta, yatak, oda…  (Ctrl+F)" style="width:340px;max-width:100%">
           <label class="chk"><input type="checkbox" id="yBosOnly"> Sadece boş yataklar</label>
         </div>
-        <div class="table-wrap" style="max-height:calc(100vh - 380px + var(--gain, 0px))"><table class="fixed" style="min-width:900px">
-          <colgroup><col style="width:70px"><col><col style="width:80px"><col style="width:80px"><col style="width:80px"><col style="width:135px"><col style="width:100px"><col style="width:80px"></colgroup>
+        <div class="table-wrap" style="max-height:calc(100vh - 380px + var(--gain, 0px))"><table class="fixed" data-cols="ybdb-yatak" style="min-width:1040px">
+          <colgroup><col style="width:70px"><col><col style="width:80px"><col style="width:150px"><col style="width:80px"><col style="width:150px"><col style="width:130px"><col style="width:80px"></colgroup>
           <thead><tr id="yYatakHead"></tr></thead><tbody id="yYatakBody"></tbody></table></div>
       </section>
     </div>

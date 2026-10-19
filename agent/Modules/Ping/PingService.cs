@@ -14,7 +14,8 @@ namespace RboxAgent.Modules.Ping
         public bool Quiet { get; set; }
     }
 
-    public sealed record Cell(string Text, string Sev);
+    /// <summary>Hücre: metin, renk (ok/warn/error/muted…) ve isteğe bağlı ipucu.</summary>
+    public sealed record Cell(string Text, string Sev, string? Tip = null);
     public sealed record MacCell(string Text, string Source, string Sev);
 
     /// <summary>Tarayıcıya giden tek satırlık sonuç. Metin ve renkleri ajan üretir; arayüz sadece çizer.</summary>
@@ -27,6 +28,7 @@ namespace RboxAgent.Modules.Ping
         public long PingSort { get; init; }
         public Cell Ping { get; init; } = new("—", "muted");
         public Cell Ssh { get; init; } = new("—", "muted");
+        public Cell SshBanner { get; init; } = new("—", "muted");
         public MacCell Mac { get; init; } = new("—", "", "muted");
         public Cell Vendor { get; init; } = new("—", "muted");
         public Cell Status { get; init; } = new("", "none");
@@ -51,6 +53,7 @@ namespace RboxAgent.Modules.Ping
 
         public static CheckOptions BuildOptions(PingSettings s, SshSettings ssh) => new(
             CheckSsh: s.CheckSsh,
+            CheckSshBanner: s.CheckSshBanner,
             CheckMac: s.CheckMac,
             CheckVendor: s.CheckVendor,
             SshMacFallback: s.SshMacFallback,
@@ -141,6 +144,15 @@ namespace RboxAgent.Modules.Ping
                 null => new(Dash, "muted"),
             };
 
+            Cell sshBanner = r.SshBanner switch
+            {
+                SshBannerState.Responding => new("Veriyor", "ok", r.SshBannerText),
+                SshBannerState.NoResponse => new("Yanıt yok", "error",
+                    "Port 22 açık ama sshd karşılama göndermedi (1,5 sn).\nBu cihaza SSH ile bağlanılamaz; güncelleme \"SSH banner alınamadı\" der.\nCihazı yeniden başlatmak genellikle düzeltir."),
+                SshBannerState.Closed => new("Port kapalı", "warn", "Port 22'ye bağlanılamadı."),
+                _ => new(Dash, "muted"),
+            };
+
             MacCell mac;
             if (r.DetectedMac != null)
                 mac = new(r.DetectedMac, r.MacViaSsh ? "SSH" : "ARP", r.MacMatch == false ? "error" : "none");
@@ -159,6 +171,7 @@ namespace RboxAgent.Modules.Ping
                 PingSort = sort,
                 Ping = ping,
                 Ssh = ssh,
+                SshBanner = sshBanner,
                 Mac = mac,
                 Vendor = vendor,
                 Status = DescribeStatus(r),
@@ -178,8 +191,10 @@ namespace RboxAgent.Modules.Ping
                 return new(bothPi ? "Başka bir Pi" : "Farklı cihaz", "error");
             }
 
-            if (r.PingOk != true && r.SshOpen != true) return new("Ulaşılamıyor", "warn");
-            if (r.SshOpen == false) return new("SSH kapalı", "warn");
+            bool port22 = r.SshOpen == true || r.SshBanner is SshBannerState.Responding or SshBannerState.NoResponse;
+            if (r.PingOk != true && !port22) return new("Ulaşılamıyor", "warn");
+            if (r.SshOpen == false || r.SshBanner == SshBannerState.Closed) return new("SSH kapalı", "warn");
+            if (r.SshBanner == SshBannerState.NoResponse) return new("SSH yanıt vermiyor", "error");
             if (r.MacChecked && r.DetectedMac == null) return new("MAC okunamadı", "warn");
             if (r.ExcelMacDisplay.Length > 0 && !r.ExcelMacValid) return new("Excel MAC geçersiz", "warn");
             if (r.MacMatch == true) return new("Eşleşiyor", "ok");

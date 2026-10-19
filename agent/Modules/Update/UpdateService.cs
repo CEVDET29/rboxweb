@@ -301,7 +301,7 @@ namespace RboxAgent.Modules.Update
                         var updater = new SshUpdater(ip, user, pass, WorkFolder, logger.LogAsync);
                         try
                         {
-                            using var client = await Task.Run(() => updater.Connect(5), ct);
+                            using var client = await updater.ConnectAsync(ct);
                             if (!client.IsConnected) { Ver(t.Id, "SSH bağlanamadı", "muted"); return; }
 
                             var (ok, stdout, _) = await updater.ExecuteSudoGetOutputAsync(client,
@@ -404,7 +404,7 @@ namespace RboxAgent.Modules.Update
                 var updater = new SshUpdater(targetIp, user, pass, WorkFolder, logger.LogAsync);
                 try
                 {
-                    using var client = await Task.Run(() => updater.Connect(8));
+                    using var client = await updater.ConnectAsync(CancellationToken.None, 8);
                     if (!client.IsConnected) { Log("SSH bağlantısı başarısız.", StatusKind.Error); return; }
 
                     if ((r.DoYatak || r.DoServer) && !await UpdateJsonSettingsAsync(client, updater, targetIp, r, Log)) return;

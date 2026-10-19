@@ -169,7 +169,7 @@ namespace RboxAgent
                     OuiLookup.Preload();
                     await Reply(res, new
                     {
-                        ping.CheckSsh, ping.CheckMac, ping.CheckVendor, ping.SshMacFallback,
+                        ping.CheckSsh, ping.CheckSshBanner, ping.CheckMac, ping.CheckVendor, ping.SshMacFallback,
                         ping.Concurrency, ping.PingTimeoutMs, ping.TcpTimeoutMs, ping.SshTimeoutMs, ping.MonitorIntervalMin,
                         oui = OuiLookup.SourceDescription,
                     });
@@ -179,6 +179,7 @@ namespace RboxAgent
                 {
                     var b = await Body<PingSettingsIn>(req);
                     if (b.CheckSsh is bool a1) ping.CheckSsh = a1;
+                    if (b.CheckSshBanner is bool a5) ping.CheckSshBanner = a5;
                     if (b.CheckMac is bool a2) ping.CheckMac = a2;
                     if (b.CheckVendor is bool a3) ping.CheckVendor = a3;
                     if (b.SshMacFallback is bool a4) ping.SshMacFallback = a4;
@@ -726,6 +727,7 @@ namespace RboxAgent
         private sealed class PingSettingsIn
         {
             public bool? CheckSsh { get; set; }
+            public bool? CheckSshBanner { get; set; }
             public bool? CheckMac { get; set; }
             public bool? CheckVendor { get; set; }
             public bool? SshMacFallback { get; set; }

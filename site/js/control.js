@@ -2,7 +2,7 @@
 // Her kartta "Cihaz | Hasta" sekmesi: Hasta, yataktaki hastayı ve son monitör / ventilatör değerlerini YBDB'den gösterir.
 // WPF ControlView / ControlDevice / ControlPatient / ControlViewModel karşılığı. SSH ve SQL okuması ajandadır; biçimlendirme burada.
 import { api, stream } from "./api.js";
-import { $, $$, esc, toast, unitColor, ICONS, storeGet, storeSet } from "./util.js";
+import { $, $$, esc, toast, unitColor, ipFilter, ICONS, storeGet, storeSet } from "./util.js";
 
 const DASH = "—";
 
@@ -59,6 +59,64 @@ function usbPort(key, value) {
   };
 }
 
+/** EDID'den monitör adı (tanımlayıcı 0xFC); yoksa üç harfli üretici kodu (ör. "DEL"). WPF ControlDevice.EdidName. */
+function edidName(b64) {
+  let e;
+  try { e = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0)); } catch { return ""; }
+  if (e.length < 128 || e[0] !== 0 || e[1] !== 0xff || e[7] !== 0) return "";
+  for (let d = 54; d + 18 <= 126; d += 18) {
+    if (e[d] === 0 && e[d + 1] === 0 && e[d + 2] === 0 && e[d + 3] === 0xfc) {
+      let name = String.fromCharCode(...e.slice(d + 5, d + 18));
+      const nl = name.indexOf("\n");
+      if (nl >= 0) name = name.slice(0, nl);
+      name = name.trim();
+      if (name) return name;
+    }
+  }
+  const id = (e[8] << 8) | e[9], k = [(id >> 10) & 31, (id >> 5) & 31, id & 31];
+  return k.every((x) => x >= 1 && x <= 26) ? k.map((x) => String.fromCharCode(64 + x)).join("") : "";
+}
+
+/**
+ * HDMI kablosu takılı mı (WPF ControlDevice.ApplyHdmi). KMS: "HDMI_card1-HDMI-A-1=connected|<EDID base64>";
+ * eski sürücü: TVS = "tvservice -s" (bit 0x2 takılı, 0x1 takılı değil), TVN = "tvservice -n" (device_name=…).
+ * hdmi_force_hotplug açıksa kablo yokken de "bağlı" görünür. Bilgi gelmezse null.
+ */
+function parseHdmi(values, g) {
+  const ports = [];
+  for (const [k, v] of Object.entries(values)) {
+    if (!/^hdmi_/i.test(k)) continue;
+    const key = k.slice(5), a = key.lastIndexOf("-A-");
+    const port = a >= 0 ? "HDMI-" + key.slice(a + 3) : key;           // card1-HDMI-A-1 → HDMI-1
+    if (ports.some((x) => x.port === port)) continue;
+    const [st = "", edid = ""] = String(v).split("|");
+    const s = st.trim();
+    ports.push({ port, conn: s === "connected" ? true : s === "disconnected" ? false : null, mon: edid.trim() ? edidName(edid.trim()) : "" });
+  }
+  let source = "KMS (/sys/class/drm)";
+  const tvs = g("TVS");
+  if (!ports.length && tvs && /^state/i.test(tvs)) {
+    const m = /state\s+0x([0-9a-f]+)/i.exec(tvs);
+    let conn = null;
+    if (m) { const st = parseInt(m[1], 16); conn = st & 2 ? true : st & 1 ? false : null; }
+    const tvn = g("TVN") ?? "";
+    let name = tvn.startsWith("device_name=") ? tvn.slice(12).trim() : "";
+    if (name.indexOf("-") === 3) name = name.slice(4);                // "DEL-DELL P2419H": üretici kodu önde
+    ports.push({ port: "HDMI", conn, mon: conn === true ? name : "" });
+    source = "tvservice (eski sürücü) · " + tvs;
+  }
+  if (!ports.length) return null;
+  const multi = ports.length > 1, on = ports.filter((x) => x.conn === true);
+  const label = (x) => (multi ? x.port + " bağlı" : "Bağlı") + (x.mon ? " · " + x.mon : "");
+  let text, sev;
+  if (on.length) { text = on.map(label).join(", "); sev = "ok"; }
+  else if (ports.every((x) => x.conn === false)) { text = "Takılı değil"; sev = "warn"; }
+  else { text = "Bilinmiyor"; sev = "muted"; }
+  const tip = ports.map((x) => `${x.port}: ${x.conn === true ? "bağlı" : x.conn === false ? "takılı değil" : "bilinmiyor"}${x.mon ? " · " + x.mon : ""}`).join("\n")
+    + "\nKaynak: " + source + '\nNot: hdmi_force_hotplug açıksa kablo yokken de "bağlı" görünebilir.';
+  return { text, sev, tip };
+}
+
 /** Cihazdan gelen "ANAHTAR=değer" satırlarından kart verisini üretir (WPF ControlDevice.ApplyStats). */
 function parseStats(values, d) {
   const V = Object.fromEntries(Object.entries(values).map(([k, x]) => [k.toLowerCase(), x]));
@@ -76,6 +134,15 @@ function parseStats(values, d) {
   s.load = g("LOAD") ?? DASH;
   s.mem = usedTotal(g("MEM"));
   s.disk = usedTotal(g("DISK"));
+
+  // İşlemci: CPU = "t1 i1 t2 i2" (/proc/stat toplam ve boşta+iowait, 0,5 sn arayla) → kullanım = 1 − Δboşta / Δtoplam
+  const cp = String(g("CPU") ?? "").trim().split(/\s+/).map(Number);
+  if (cp.length === 4 && cp.every(Number.isFinite) && cp[2] - cp[0] > 0) {
+    const pct = Math.min(100, Math.max(0, Math.round(100 * (1 - (cp[3] - cp[1]) / (cp[2] - cp[0])))));
+    const nc = parseInt(g("NCPU"), 10);
+    s.cpu = { pct, text: `%${pct}`, sev: pct >= 90 ? "error" : pct >= 70 ? "warn" : "ok", detail: (nc > 0 ? `${nc} çekirdek · ` : "") + `yük ${s.load}` };
+  } else s.cpu = null;
+  s.hdmi = parseHdmi(values, g);
 
   // Kart boyutu (lsblk, bayt) ile kök bölüm boyutu (df, MB): fark 1 GB'tan büyükse bölüm kartın tamamını kullanmıyordur
   const diskRaw = g("DISK"), cardBytes = g("CARD");
@@ -292,6 +359,9 @@ export function createControl(ctx) {
         <label class="chk"><input type="checkbox" id="cAuto"> Otomatik yenile</label>
         <select id="cSecs" title="Otomatik yenileme aralığı"><option value="10">10 sn</option><option value="15" selected>15 sn</option><option value="30">30 sn</option><option value="60">60 sn</option></select>
         <button class="btn icon" id="cToggle" title="Tüm odaları daralt / genişlet" style="border-color:var(--border-strong)">${ICONS.chevrons}</button>
+        <span class="row tight"><input type="text" id="cNewIp" class="mono-input" placeholder="IP adresi" style="width:150px" autocomplete="off"
+          title="Listede olmayan bir cihazı ekleyin: IP yazıp Enter ya da + (Oda belirtilmemiş grubuna kart eklenir)">
+        <button class="btn ib" id="cAddIp" title="Ekle · IP'yi listeye ekle">${ICONS.plus}</button></span>
         <span class="sm muted" id="cNote"></span>
         <span class="spacer" style="flex:1"></span>
         <button class="btn" id="cRestartAll" title="Listedeki tüm cihazlarda serialworker.service'i yeniden başlatır (onay istenir)">${ICONS.term} SerialWorker'ı yeniden başlat (tümü)</button>
@@ -482,7 +552,9 @@ export function createControl(ctx) {
         <div><div class="tk">Sıcaklık</div><div class="tv ${s?.temp.sev ?? ""}">${esc(s?.temp.text ?? DASH)}</div></div><i></i>
         <div><div class="tk">Çalışma süresi</div><div class="tv">${esc(s?.uptime ?? DASH)}</div></div>
       </div>
-      <div class="meterrow"><span><span class="lbl">Bellek</span> ${esc(s?.mem.text ?? DASH)}</span><b>%${s?.mem.pct ?? 0}</b></div>
+      <div class="meterrow" title="İşlemci kullanımı (0,5 sn ölçüm). Yük: son 1 dakikanın ortalaması (çekirdek sayısını aşarsa işlemci yetişemiyor)."><span><span class="lbl">İşlemci</span> <span class="muted sm">${esc(s?.cpu?.detail ?? "")}</span></span><b class="${s?.cpu?.sev ?? "none"}">${esc(s?.cpu?.text ?? DASH)}</b></div>
+      <div class="meter ${s?.cpu?.sev === "error" ? "crit" : s?.cpu?.sev === "warn" ? "hi" : ""}"><div style="width:${s?.cpu?.pct ?? 0}%"></div></div>
+      <div class="meterrow" style="margin-top:10px"><span><span class="lbl">Bellek</span> ${esc(s?.mem.text ?? DASH)}</span><b>%${s?.mem.pct ?? 0}</b></div>
       <div class="meter ${(s?.mem.pct ?? 0) >= 90 ? "crit" : (s?.mem.pct ?? 0) >= 75 ? "hi" : ""}"><div style="width:${s?.mem.pct ?? 0}%"></div></div>
       <div class="meterrow" style="margin-top:10px"><span><span class="lbl">Depolama</span> ${esc(s?.disk.text ?? DASH)} <span class="muted sm">${esc(s?.cardText ?? "")}</span></span>
         <span class="row tight" style="gap:6px"><b>%${s?.disk.pct ?? 0}</b>
@@ -492,6 +564,7 @@ export function createControl(ctx) {
       <div class="swrow"><span class="row tight"><span class="muted">SerialWorker</span>${badge(s?.swText ?? DASH, s?.swSev ?? "muted")}${d.swVersion ? `<span class="badge sev-info" title="SerialWorkerServiceVol61.dll sürümü">${esc(d.swVersion)}</span>` : ""}</span>
         <span class="muted">Yük <span style="color:var(--text)">${esc(s?.load ?? DASH)}</span></span></div>`;
 
+    if (s?.hdmi) h += `<div class="hdmirow" title="${esc(s.hdmi.tip)}"><span class="tk">HDMI</span>${badge(s.hdmi.text, s.hdmi.sev)}</div>`;
     if (s) {
       h += `<div class="tk" style="margin-top:14px">USB</div>` +
         (s.usb.length === 0 ? `<div class="sm muted" style="margin-top:6px">Takılı USB seri aygıt yok</div>` :
@@ -519,7 +592,8 @@ export function createControl(ctx) {
     if (!d.bedOnly) h += `
         <button class="btn mini" data-act="update" data-id="${d.id}" title="İlgili cihazı güncelle (Cihaz Güncelleme'ye geçer)">${ICONS.upload}</button>
         <button class="btn mini" data-act="restartSw" data-id="${d.id}" ${disabled} title="SerialWorker servisini yeniden başlat">${ICONS.term}</button>
-        <button class="btn mini" data-act="reboot" data-id="${d.id}" ${disabled} title="Cihazı yeniden başlat" style="color:var(--error-text)">⏻</button>`;
+        <button class="btn mini" data-act="reboot" data-id="${d.id}" ${disabled} title="Cihazı yeniden başlat" style="color:var(--error-text)">⏻</button>
+        <button class="btn mini ib" data-act="remove" data-id="${d.id}" ${disabled} title="Listeden kaldır (Excel dosyasına dokunulmaz)">${ICONS.trash}</button>`;
     return h + `</div></div>`;
   }
 
@@ -748,6 +822,22 @@ export function createControl(ctx) {
       await exec("reboot", [d], "", "Yeniden başlatılıyor", true);
   }
 
+  // ── Elle IP ekleme (WPF ControlViewModel.AddIp): SSH şifresi kayıtlıysa kart hemen okunur ──
+  const newIp = $("#cNewIp", root);
+  ipFilter(newIp, "ip");
+  function addIp() {
+    const ip = newIp.value.trim();
+    if (!isIpv4(ip)) { toast("Geçerli bir IP girin."); return; }
+    if (devices.some((d) => d.ip === ip)) { toast(`${ip} zaten listede.`); return; }
+    const d = newDevice({ ip, yatak: "", yatakId: "", mac: "" }, roomFor(""));
+    devices.push(d);
+    newIp.value = "";
+    updateNote(); setStatus(`${ip} eklendi`); render();
+    if (ctx.hasSsh?.() && !busy) refresh([d]);
+  }
+  $("#cAddIp", root).addEventListener("click", addIp);
+  newIp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addIp(); } });
+
   // ── Olaylar ─────────────────────────────────────────────────
   // Yenile: hasta bilgileri (YBDB, SSH gerekmez) ve cihazlar (SSH) birlikte
   const refreshAll = () => { refreshPatients(); refresh(deviceCards()); };
@@ -786,6 +876,7 @@ export function createControl(ctx) {
       case "restartSw": restartSw([d], `${d.yatakAdi} (${d.ip}) — SerialWorker servisi yeniden başlatılsın mı?`); break;
       case "reboot": reboot([d], `${d.yatakAdi} (${d.ip}) YENİDEN BAŞLATILSIN mı?`); break;
       case "expand": expandStorage(d); break;
+      case "remove": devices = devices.filter((x) => x !== d); updateNote(); render(); break;
     }
   });
 

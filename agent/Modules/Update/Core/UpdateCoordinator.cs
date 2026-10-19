@@ -1800,14 +1800,15 @@ namespace RboxAgent.Modules.Update.Core
                 await _logger.LogAsync(ip, "Bağlanılıyor...");
                 ct.ThrowIfCancellationRequested();
 
-                if (!await HasSshBannerAsync(ip))
+                if (!await HasSshBannerAsync(ip, ct))
                 {
                     _status.Set(ip, "SSH banner alınamadı — sshd cevap vermiyor.", StatusKind.Error);
                     return false;
                 }
 
                 SshClient client;
-                try { client = await Task.Run(() => updater.Connect(), ct); }
+                try { client = await updater.ConnectAsync(ct); }
+                catch (OperationCanceledException) { throw; }
                 catch (SshOperationTimeoutException)
                 {
                     _status.Set(ip, "SSH zaman aşımı.", StatusKind.Error); return false;
@@ -1872,21 +1873,21 @@ namespace RboxAgent.Modules.Update.Core
             _status.Set(host, msg, StatusKind.Error); // FileReportLogger.Tee: rapora da yazılır
         }
 
-        private static async Task<bool> HasSshBannerAsync(string host, int port = 22, int timeoutMs = 1500)
+        private static async Task<bool> HasSshBannerAsync(string host, CancellationToken ct, int port = 22, int timeoutMs = 1500)
         {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(timeoutMs);
             try
             {
                 using var c = new TcpClient();
-                var conn = c.ConnectAsync(host, port);
-                var delay = Task.Delay(timeoutMs);
-                if (await Task.WhenAny(conn, delay) != conn || !c.Connected) return false;
+                await c.ConnectAsync(host, port, timeout.Token);
 
                 using var s = c.GetStream();
-                s.ReadTimeout = timeoutMs;
                 var buf = new byte[128];
-                int n = await s.ReadAsync(buf, 0, buf.Length);
+                int n = await s.ReadAsync(buf.AsMemory(), timeout.Token);
                 return n > 0 && Encoding.ASCII.GetString(buf, 0, n).StartsWith("SSH-");
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { return false; }
         }
     }

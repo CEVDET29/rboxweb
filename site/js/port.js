@@ -159,7 +159,7 @@ export function createPort() {
           <span>${r.ports.length || r.names.length ? "Portlar ve bağlantılar" : "Dinlenen portlar"} (<span id="pEpCount">${r.endpoints.length}</span>)</span>
           <input type="search" id="pEpSearch" placeholder="Süz: port, adres, uygulama…" style="width:280px;text-transform:none;letter-spacing:0;font-weight:400"></div>
         <div class="card-b" style="padding:10px 0 0"><div class="table-wrap" style="max-height:calc(100vh - 300px + var(--gain, 0px));min-height:120px">
-          <table class="fixed" style="min-width:1300px"><colgroup>${EP_COLS.map((c) => `<col${c.w ? ` style="width:${c.w}px"` : ""}>`).join("")}</colgroup>
+          <table class="fixed" data-cols="port-ep" style="min-width:1300px"><colgroup>${EP_COLS.map((c) => `<col${c.w ? ` style="width:${c.w}px"` : ""}>`).join("")}</colgroup>
           <thead><tr id="pEpHead"></tr></thead><tbody id="pEpBody"></tbody></table></div></div></section>`;
     }
     if (r.firewall) h += firewall(r.firewall);
@@ -228,7 +228,7 @@ export function createPort() {
       <td title="${esc(p.tls)}">${esc(p.tls) || DASH}</td></tr>`).join("");
     return `<section class="card"><div class="card-h">Portlar (${list.filter((p) => p.open).length} açık / ${list.length})</div>
       <div class="card-b" style="padding:10px 0 0"><div class="table-wrap" style="max-height:none;min-height:0">
-      <table class="fixed" style="min-width:1000px"><colgroup><col style="width:80px"><col style="width:180px"><col style="width:260px"><col style="width:80px"><col><col style="width:360px"></colgroup>
+      <table class="fixed" data-cols="port-remote" style="min-width:1000px"><colgroup><col style="width:80px"><col style="width:180px"><col style="width:260px"><col style="width:80px"><col><col style="width:360px"></colgroup>
       <thead><tr><th>Port</th><th>Servis</th><th>Durum</th><th>Süre</th><th>Tanıtım / sunucu</th><th>TLS sertifikası</th></tr></thead><tbody>${rows}</tbody></table></div></div></section>`;
   }
 
@@ -237,7 +237,7 @@ export function createPort() {
       <td class="mono">${esc(s.version)}</td><td class="mono">${esc(s.tcpPort) || '<span class="txt-error">TCP kapalı</span>'}</td></tr>`).join("");
     return `<section class="card"><div class="card-h">SQL Server örnekleri (SQL Browser)</div>
       <div class="card-b" style="padding:10px 0 0"><div class="table-wrap" style="max-height:none;min-height:0">
-      <table class="fixed"><colgroup><col><col style="width:180px"><col style="width:200px"><col style="width:160px"><col style="width:120px"></colgroup>
+      <table class="fixed" data-cols="port-sql"><colgroup><col><col style="width:180px"><col style="width:200px"><col style="width:160px"><col style="width:120px"></colgroup>
       <thead><tr><th>Sunucu</th><th>Örnek</th><th>Ürün</th><th>Sürüm</th><th>TCP port</th></tr></thead><tbody>${rows}</tbody></table></div></div></section>`;
   }
 
@@ -251,7 +251,7 @@ export function createPort() {
     return `<section class="card"><div class="card-h">Güvenlik duvarı · gelen kurallar</div>
       <div class="card-b" style="padding-bottom:8px"><span class="${fw.anyProfileOff ? "txt-error" : "sm muted"}">${esc(fw.profiles)}</span></div>
       ${fw.rules.length ? `<div class="table-wrap" style="max-height:420px;min-height:0">
-      <table class="fixed" style="min-width:1100px"><colgroup><col><col style="width:90px"><col style="width:100px"><col style="width:80px"><col style="width:130px"><col style="width:170px"><col style="width:170px"><col style="width:140px"></colgroup>
+      <table class="fixed" data-cols="port-fw" style="min-width:1100px"><colgroup><col><col style="width:90px"><col style="width:100px"><col style="width:80px"><col style="width:130px"><col style="width:170px"><col style="width:170px"><col style="width:140px"></colgroup>
       <thead><tr><th>Kural</th><th>Durum</th><th>Eylem</th><th>Protokol</th><th>Port</th><th>Program</th><th>Profil</th><th>Uzak adres</th></tr></thead><tbody>${rows}</tbody></table></div>`
       : `<div class="card-b" style="padding-top:0"><span class="warnbox w" style="display:inline-block;margin:0">Bu port / uygulama için özel bir gelen kuralı yok: başka bilgisayarlardan bağlantı engellenebilir.</span></div>`}
     </section>`;

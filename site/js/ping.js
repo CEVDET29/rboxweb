@@ -1,9 +1,10 @@
 // Ping Kontrol modülü: Excel'deki cihazlara ping, SSH portu ve MAC kontrolü (WPF PingView karşılığı).
 import { api, stream } from "./api.js";
-import { $, $$, esc, debounce, toast, copyText, downloadCsv, sortCompare, ICONS } from "./util.js";
+import { $, $$, esc, debounce, toast, copyText, downloadCsv, sortCompare, ipFilter, ICONS } from "./util.js";
 
 const ROOM_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#A855F7", "#EC4899", "#14B8A6", "#EF4444", "#84CC16"];
 const DASH = "—";
+const isIpv4 = (s) => { const p = String(s || "").trim().split("."); return p.length === 4 && p.every((x) => /^\d{1,3}$/.test(x) && +x <= 255); };
 
 const COLUMNS = [
   { key: "yatak", label: "Yatak", sort: (r) => r.yatak },
@@ -12,6 +13,7 @@ const COLUMNS = [
   { key: "mac", label: "MAC (Excel)", sort: (r) => r.mac },
   { key: "ping", label: "Ping", sort: (r) => (r.res ? r.res.pingSort : Number.MAX_SAFE_INTEGER) },
   { key: "ssh", label: "SSH", sort: (r) => cell(r, "ssh").text },
+  { key: "sshb", label: "SSH yanıtı", sort: (r) => cell(r, "sshBanner").text },
   { key: "dmac", label: "Cihaz MAC", sort: (r) => cell(r, "mac").text },
   { key: "vendor", label: "Üretici", sort: (r) => cell(r, "vendor").text },
   { key: "status", label: "Durum", sort: (r) => cell(r, "status").text },
@@ -43,7 +45,7 @@ function cell(r, col) {
       return { text: DASH, sev: "muted", source: "" };
   }
   if (!R) return col === "status" ? { text: "", sev: "none" } : { text: DASH, sev: "muted", source: "" };
-  return R[col];
+  return R[col] ?? { text: DASH, sev: "muted", source: "" };     // eski ajan bu sütunu göndermez
 }
 
 export function createPing(ctx) {
@@ -62,7 +64,7 @@ export function createPing(ctx) {
   let sort = { key: null, dir: 1 };
   let lastRunInfo = "";
   let monitorTimer = null;
-  let cfg = { checkSsh: false, checkMac: false, checkVendor: false, sshMacFallback: false, monitorIntervalMin: 5, oui: "" };
+  let cfg = { checkSsh: false, checkSshBanner: false, checkMac: false, checkVendor: false, sshMacFallback: false, monitorIntervalMin: 5, oui: "" };
 
   // ── İskelet ─────────────────────────────────────────────────
   root.innerHTML = `
@@ -83,6 +85,7 @@ export function createPing(ctx) {
         <div class="row" style="gap:20px">
           <span class="sm muted">Kontroller</span>
           <label class="chk"><input type="checkbox" id="oSsh"> SSH portu (22)</label>
+          <label class="chk" title="Port 22 açıkken sshd gerçekten cevap veriyor mu (karşılama satırı, 1,5 sn).&#10;Port açık ama yanıt yoksa cihaza SSH ile bağlanılamaz; güncelleme bu cihazda başarısız olur."><input type="checkbox" id="oSshB"> SSH yanıtı</label>
           <label class="chk"><input type="checkbox" id="oMac"> MAC adresi</label>
           <label class="chk" title="ARP'den MAC okunamazsa SSH ile cihazdan okur"><input type="checkbox" id="oFallback"> SSH ile MAC (yedek)</label>
           <label class="chk"><input type="checkbox" id="oVendor"> Üretici</label>
@@ -94,13 +97,17 @@ export function createPing(ctx) {
     <div class="ping-split" id="pSplit">
     <section class="card">
       <div class="card-b row" style="padding-bottom:12px">
+        <!-- Elle IP ekleme (Excel'de olmayan cihaz): ortak IP kuralı (util.js ipFilter) -->
+        <span class="row tight"><input type="text" id="pNewIp" class="mono-input" placeholder="IP adresi" style="width:150px" autocomplete="off"
+          title="Listede olmayan bir cihazı ekleyin: IP yazıp Enter ya da + (Oda belirtilmemiş grubuna eklenir)">
+        <button class="btn ib" id="pAddIp" title="Ekle · IP'yi listeye ekle">${ICONS.plus}</button></span>
         <input type="search" id="pSearch" placeholder="Ara: oda, yatak, IP, MAC…  (Ctrl+F)" style="width:340px;max-width:100%">
         <span class="sm muted" id="pCount"></span>
         <span class="spacer" style="flex:1"></span>
         <span class="sm muted">Sürekli ping için satıra çift tıklayın</span>
       </div>
-      <div class="table-wrap"><table class="fixed" style="min-width:1316px">
-        <colgroup><col style="width:44px"><col style="width:120px"><col style="width:80px"><col style="width:130px"><col style="width:150px"><col style="width:96px"><col style="width:80px"><col style="width:170px"><col><col style="width:150px"><col style="width:196px"></colgroup>
+      <div class="table-wrap"><table class="fixed" data-cols="ping" style="min-width:1474px">
+        <colgroup><col style="width:44px"><col style="width:120px"><col style="width:80px"><col style="width:130px"><col style="width:150px"><col style="width:96px"><col style="width:80px"><col style="width:110px"><col style="width:170px"><col><col style="width:150px"><col style="width:244px"></colgroup>
         <thead><tr id="pHead"></tr></thead>
         <tbody id="pBody"></tbody>
       </table></div>
@@ -130,7 +137,7 @@ export function createPing(ctx) {
   const el = {
     file: q("pFile"), fileSub: q("pFileSub"),
     start: q("pStart"), export: q("pExport"), bar: q("pBar"), status: q("pStatus"),
-    ssh: q("oSsh"), mac: q("oMac"), vendor: q("oVendor"), fallback: q("oFallback"),
+    ssh: q("oSsh"), sshb: q("oSshB"), mac: q("oMac"), vendor: q("oVendor"), fallback: q("oFallback"),
     monitor: q("oMonitor"), monitorText: q("oMonitorText"),
     tiles: q("pTiles"), search: q("pSearch"), count: q("pCount"), head: q("pHead"), body: q("pBody"),
   };
@@ -138,7 +145,7 @@ export function createPing(ctx) {
   // ── Ayarlar (ajanda saklanır) ───────────────────────────────
   async function loadSettings() {
     try { cfg = await api("/api/settings/ping"); } catch { return; }
-    el.ssh.checked = cfg.checkSsh; el.mac.checked = cfg.checkMac; el.vendor.checked = cfg.checkVendor;
+    el.ssh.checked = cfg.checkSsh; el.sshb.checked = !!cfg.checkSshBanner; el.mac.checked = cfg.checkMac; el.vendor.checked = cfg.checkVendor;
     el.fallback.checked = cfg.sshMacFallback;
     el.monitorText.textContent = `İzleme modu (her ${cfg.monitorIntervalMin} dk)`;
     updateStatus();
@@ -146,7 +153,7 @@ export function createPing(ctx) {
 
   const saveSettings = debounce(async () => {
     const body = {
-      checkSsh: el.ssh.checked, checkMac: el.mac.checked,
+      checkSsh: el.ssh.checked, checkSshBanner: el.sshb.checked, checkMac: el.mac.checked,
       checkVendor: el.vendor.checked, sshMacFallback: el.fallback.checked,
     };
     try {
@@ -155,7 +162,7 @@ export function createPing(ctx) {
     } catch (e) { toast("Ayarlar kaydedilemedi: " + e.message); }
   }, 500);
 
-  [el.ssh, el.mac, el.vendor, el.fallback].forEach((c) => c.addEventListener("change", () => { syncOptionDeps(); saveSettings(); }));
+  [el.ssh, el.sshb, el.mac, el.vendor, el.fallback].forEach((c) => c.addEventListener("change", () => { syncOptionDeps(); saveSettings(); }));
 
   function syncOptionDeps() {
     // "SSH ile MAC" yalnızca MAC ve SSH açıkken anlamlı (WPF ile aynı mantık)
@@ -185,7 +192,33 @@ export function createPing(ctx) {
   }
 
   // ── Kontrol çalıştırma ──────────────────────────────────────
-  const optKey = () => `${el.ssh.checked}|${el.mac.checked}|${el.fallback.checked}`;
+  const optKey = () => `${el.ssh.checked}|${el.sshb.checked}|${el.mac.checked}|${el.fallback.checked}`;
+
+  // ── Elle IP ekleme / satırı kaldırma (WPF PingViewModel.AddIp / RemoveItem) ──
+  const newIp = q("pNewIp");
+  ipFilter(newIp, "ip");
+  function addIp() {
+    const ip = newIp.value.trim();
+    if (running) { toast("Kontrol sürerken IP eklenemez."); return; }
+    if (!isIpv4(ip)) { toast("Geçerli bir IP girin."); return; }
+    if (rows.some((r) => r.ip === ip)) { toast(`${ip} zaten listede.`); return; }
+    let room = rooms.findIndex((x) => x.title === "(Oda belirtilmemiş)");
+    if (room < 0) { room = rooms.length; rooms.push({ title: "(Oda belirtilmemiş)", idx: room, collapsed: false }); }
+    rows.push({ oda: "", yatak: "", yatakId: "", ip, ipSort: 0, mac: "", macInvalid: false,
+      id: rows.length, room, checked: true, state: "idle", res: null, optKey: null, changed: false, error: "" });
+    newIp.value = "";
+    updateUi(); render();
+    el.status.textContent = `${ip} eklendi`;
+  }
+  q("pAddIp").addEventListener("click", addIp);
+  newIp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addIp(); } });
+
+  function removeRow(r) {
+    if (running) { toast("Kontrol sürerken satır kaldırılamaz."); return; }
+    rows = rows.filter((x) => x !== r);
+    rows.forEach((x, i) => { x.id = i; });            // satır kimliği = dizideki sıra (akıştaki id ile eşleşir)
+    updateUi(); render();
+  }
 
   async function runChecks(list, reset) {
     if (running || list.length === 0) return;
@@ -385,7 +418,7 @@ export function createPing(ctx) {
       }
       if (room.collapsed) continue;
 
-      const ping = cell(r, "ping"), ssh = cell(r, "ssh"), dm = cell(r, "mac"), ven = cell(r, "vendor"), st = cell(r, "status");
+      const ping = cell(r, "ping"), ssh = cell(r, "ssh"), sshb = cell(r, "sshBanner"), dm = cell(r, "mac"), ven = cell(r, "vendor"), st = cell(r, "status");
       html += `<tr class="item${r.changed ? " changed" : ""}${r.checked ? "" : " off"}" data-id="${r.id}">
         <td><input type="checkbox" data-check ${r.checked ? "checked" : ""} ${running ? "disabled" : ""}></td>
         <td>${esc(r.yatak) || DASH}</td>
@@ -394,6 +427,7 @@ export function createPing(ctx) {
         <td class="mono ${r.macInvalid ? "txt-error" : ""}" title="${r.macInvalid ? "Geçersiz MAC" : ""}">${esc(r.mac) || DASH}</td>
         <td>${badge(ping)}</td>
         <td>${badge(ssh)}</td>
+        <td title="${esc(sshb.tip || "")}">${badge(sshb)}</td>
         <td class="mono ${dm.sev === "error" ? "txt-error" : dm.sev === "muted" ? "txt-muted" : ""}">${esc(dm.text)}${dm.source ? `<span class="src">${dm.source}</span>` : ""}</td>
         <td class="${ven.sev === "warn" ? "" : ven.sev === "muted" ? "txt-muted" : ""}">${ven.sev === "warn" ? badge(ven) : esc(ven.text)}</td>
         <td>${badge(st)}${r.changed ? ' <span class="badge sev-warn" title="Önceki taramaya göre değişti">değişti</span>' : ""}</td>
@@ -404,6 +438,7 @@ export function createPing(ctx) {
           <button class="btn icon" data-act="copymac" title="MAC'i kopyala (cihazdan okunan, yoksa Excel'deki)">${ICONS.chip}</button>
           <button class="btn icon" data-act="ssh" title="SSH ile bağlan (sunucuda terminal açar)">${ICONS.term}</button>
           <button class="btn icon" data-act="web" title="Tarayıcıda aç">${ICONS.globe}</button>
+          <button class="btn icon" data-act="remove" title="Listeden kaldır (Excel dosyasına dokunulmaz)">${ICONS.trash}</button>
         </td></tr>`;
     }
     el.body.innerHTML = html;
@@ -451,6 +486,7 @@ export function createPing(ctx) {
         try { await api("/api/ping/ssh", { method: "POST", body: { ip: r.ip } }); } catch (err) { toast("SSH başlatılamadı: " + err.message); }
         break;
       case "web": window.open(`http://${r.ip}/`, "_blank", "noopener"); break;
+      case "remove": removeRow(r); break;
     }
   });
 
@@ -594,10 +630,10 @@ export function createPing(ctx) {
   el.export.addEventListener("click", () => {
     const list = visibleRows();
     if (!list.length) { toast("Dışa aktarılacak satır yok."); return; }
-    const headers = ["ODA ADI", "Yatak ADI", "YATAK ID", "IP", "MAC (Excel)", "Ping", "SSH", "Cihaz MAC", "MAC kaynağı", "Üretici", "Durum"];
+    const headers = ["ODA ADI", "Yatak ADI", "YATAK ID", "IP", "MAC (Excel)", "Ping", "SSH", "SSH yanıtı", "Cihaz MAC", "MAC kaynağı", "Üretici", "Durum"];
     const data = list.map((r) => [
       rooms[r.room].title, r.yatak, r.yatakId, r.ip, r.mac,
-      cell(r, "ping").text, cell(r, "ssh").text, cell(r, "mac").text, cell(r, "mac").source || "",
+      cell(r, "ping").text, cell(r, "ssh").text, cell(r, "sshBanner").text, cell(r, "mac").text, cell(r, "mac").source || "",
       cell(r, "vendor").text, cell(r, "status").text + (r.changed ? " (değişti)" : ""),
     ]);
     const base = (fileName || "PingKontrol").replace(/\.[^.]+$/, "");

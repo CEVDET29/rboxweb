@@ -1,7 +1,7 @@
 // Kabuk: giriş şifresi → ajan bağlantısı → modül sekmeleri, tema, kompakt görünüm, ortak cihaz listesi.
 import { PASSWORD_SHA256 } from "./config.js";
 import { agent, discover, setToken, checkToken, api, loopbackPermission } from "./api.js";
-import { $, esc, sha256Hex, storeGet, storeSet, sessionGet, sessionSet, toast, debounce, ICONS } from "./util.js";
+import { $, esc, sha256Hex, storeGet, storeSet, sessionGet, sessionSet, toast, debounce, installColumnResize, ICONS } from "./util.js";
 import { createPing } from "./ping.js";
 import { createYbdb } from "./ybdb.js";
 import { createUpdate } from "./update.js";
@@ -174,7 +174,7 @@ function enterApp() {
   entered = true;
 
   const ctx = {
-    pickDeviceList, loadDeviceFile, flushSsh: () => saveSsh.flush(), requireSsh,
+    pickDeviceList, loadDeviceFile, flushSsh: () => saveSsh.flush(), requireSsh, hasSsh: () => !!ssh.hasPass,
     // Cihaz Kontrol kartındaki "Güncelle": Cihaz Güncelleme'ye geç ve yalnızca o cihazı işaretle
     openInUpdate: (ip) => { select("update"); views.update.focusTarget(ip); },
   };
@@ -200,6 +200,7 @@ function enterApp() {
   }, { passive: false });
   new ResizeObserver(() => fitTabs()).observe($(".topbar-row"));
   window.addEventListener("resize", fitTabs);
+  installColumnResize();
 
   select(storeGet("rbox.module") in Object.fromEntries(MODULES.map((m) => [m.id, 1])) ? storeGet("rbox.module") : "ping");
 }

@@ -70,7 +70,7 @@ export function createFiles(ctx) {
 
     <section class="card">
       <div class="card-h row" style="justify-content:space-between">BEKLENEN DOSYALAR <span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="fKnownSum"></span></div>
-      <div class="table-wrap" style="max-height:340px"><table class="fixed" style="min-width:760px">
+      <div class="table-wrap" style="max-height:340px"><table class="fixed" data-cols="files-used" style="min-width:760px">
         <colgroup><col style="width:270px"><col><col style="width:130px"><col style="width:190px"></colgroup>
         <thead><tr><th style="cursor:default">Dosya</th><th style="cursor:default">Kullanıldığı yer</th><th style="cursor:default">Durum</th><th style="cursor:default"></th></tr></thead>
         <tbody id="fKnown"></tbody></table></div>
@@ -86,7 +86,7 @@ export function createFiles(ctx) {
         <button class="btn" id="fZip" title="Klasörün tamamını zip olarak indirir (günlük dosyası hariç): başka bir hastaneye taşımak için">${ICONS.down} Zip indir</button>
         <button class="btn" id="fImport" title="Zip'in içindekileri klasöre açar (var olan dosyaların üzerine yazar)">Zip yükle</button>
       </div>
-      <div class="table-wrap" style="max-height:420px"><table class="fixed" style="min-width:720px">
+      <div class="table-wrap" style="max-height:420px"><table class="fixed" data-cols="files-list" style="min-width:720px">
         <colgroup><col><col style="width:90px"><col style="width:140px"><col style="width:190px"></colgroup>
         <thead><tr><th style="cursor:default">Dosya</th><th style="cursor:default">Boyut</th><th style="cursor:default">Değişiklik</th><th style="cursor:default"></th></tr></thead>
         <tbody id="fAll"></tbody></table></div>

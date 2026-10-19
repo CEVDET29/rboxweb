@@ -137,6 +137,8 @@ namespace RboxAgent
         public string? SshPassProtected { get; set; }
 
         public bool CheckSsh { get; set; }
+        /// <summary>SSH yanıtı: port 22 açıkken sshd karşılama satırı gönderiyor mu (WPF ile aynı).</summary>
+        public bool CheckSshBanner { get; set; }
         public bool CheckMac { get; set; }
         public bool CheckVendor { get; set; }
         public bool SshMacFallback { get; set; }

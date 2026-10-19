@@ -104,7 +104,7 @@ export function createCihazEditor({ getYataklar }) {
         <input type="search" id="czSearch" placeholder="Ara: ad, IP, port, yatak…" style="flex:1;min-width:180px">
         <label class="chk" title="Hastane yazılımının silindi olarak işaretlediği (SilinmeTarihi dolu) satırlar"><input type="checkbox" id="czDeleted"> Silinmiş işaretlileri göster</label>
       </div>
-      <div class="table-wrap" style="max-height:calc(100vh - 360px + var(--gain, 0px))"><table class="fixed" style="min-width:560px">
+      <div class="table-wrap" style="max-height:calc(100vh - 360px + var(--gain, 0px))"><table class="fixed" data-cols="ybdb-cihaz" style="min-width:560px">
         <colgroup>${COLS.map((c) => `<col${c.w ? ` style="width:${c.w}px"` : ""}>`).join("")}</colgroup>
         <thead><tr id="czHead"></tr></thead><tbody id="czBody"></tbody></table></div>
     </section>

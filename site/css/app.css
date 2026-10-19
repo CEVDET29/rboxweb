@@ -762,3 +762,25 @@ tr.item.off td { opacity: .6; }
 @media (max-width: 1100px) { .ybdb-grid.split { grid-template-columns: minmax(0, 1fr); gap: 16px; } .ybdb-grid .vsplit { display: none; } }
 @media (max-width: 1250px) { .h7-detail.split { grid-template-columns: minmax(0, 1fr); gap: 16px; } .h7-detail .vsplit { display: none; } }
 .ybdb-grid > *, .h7-detail > * { min-width: 0; }
+
+/* Sütun genişliği (util.js installColumnResize): başlık kenarı sürüklenir, çift tıklayınca içeriğe sığar */
+th.col-edge, body.col-resizing, body.col-resizing * { cursor: col-resize !important; }
+body.col-resizing { user-select: none; }
+table.fixed[data-cols] > thead th { box-shadow: inset -1px 0 0 var(--border); }
+table.fixed[data-cols] > thead th:last-child { box-shadow: none; }
+/* Ayraç çubuğu iki kartın yüksekliğinin ortasında dursun */
+.vsplit { align-self: stretch; }
+
+/* Cihaz Güncelleme tablosu: varsayılan boyu ekranı doldurur (tam ekranda da), alt kenardan elle boyutlanabilir */
+.table-wrap.upd-wrap { height: calc(100vh - 700px + var(--gain, 0px)); max-height: none; min-height: 220px; resize: vertical; }
+/* Izgara çizgileri (Cihaz Güncelleme "ızgara" düğmesi; WPF GridLinesVisibility=All) */
+.gridlines td { border-right: 1px solid var(--border-strong); }
+.gridlines td:last-child { border-right: 0; }
+.gridlines th { box-shadow: inset -1px 0 0 var(--border-strong) !important; }
+.gridlines th:last-child { box-shadow: none !important; }
+.btn.icon[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-subtle); }
+
+/* Cihaz Kontrol kartı: işlemci değeri rengi ve HDMI satırı */
+.meterrow b.warn { color: var(--warn-text); } .meterrow b.error { color: var(--error-text); } .meterrow b.none { color: var(--text-muted); }
+.hdmirow { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.hdmirow .badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

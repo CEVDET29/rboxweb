@@ -198,8 +198,147 @@ export const ICONS = {
   term: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>',
   globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
   down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16"/></svg>',
+  grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 15h18M9 4v16M15 4v16"/></svg>',
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
 };
+
+// ── Sütun genişliği (WPF DataGrid gibi) ─────────────────────────────
+// data-cols="anahtar" verilmiş sabit düzenli tablolarda (table.fixed + colgroup) başlık hücresinin kenarı sürüklenir,
+// kenara çift tıklayınca sütun içeriğine sığar. Genişlikler tarayıcıda hatırlanır (rbox.cols.<anahtar>). Genişliği
+// verilmemiş sütun (ör. Hasta) kalan yeri doldurur; onun kayıtlı değeri en küçük genişliğidir. Başlığı yeniden
+// çizilen ya da sonradan oluşturulan tablolar da kapsanır (belge düzeyinde dinleyici + MutationObserver).
+const COL_EDGE = 6, COL_MIN = 36;
+
+/** Tablonun sütun bilgisi; ilk çağrıda HTML'deki varsayılanlar saklanır. */
+function colInfo(table) {
+  if (table._cols) return table._cols;
+  const cols = [...table.querySelectorAll(":scope > colgroup > col")];
+  const def = cols.map((c) => parseFloat(c.style.width) || null);
+  const flex = def.indexOf(null);
+  const minW0 = parseFloat(table.style.minWidth) || 0;
+  const fixedSum = def.reduce((s, w) => s + (w || 0), 0);
+  const flexMin = flex < 0 ? 0 : Math.max(120, minW0 - fixedSum);
+  return (table._cols = { cols, def, flex, minW0, flexMin, w: def.map((w, i) => (i === flex ? flexMin : w)) });
+}
+
+function applyCols(table, widths, save) {
+  const ci = colInfo(table);
+  ci.w = widths;
+  ci.cols.forEach((c, i) => { if (i !== ci.flex) c.style.width = widths[i] + "px"; });
+  table.style.minWidth = widths.reduce((s, w) => s + w, 0) + "px";
+  if (save) storeSet("rbox.cols." + table.dataset.cols, JSON.stringify(widths.map(Math.round)));
+}
+
+function restoreCols(table) {
+  if (table._colsRestored) return;
+  table._colsRestored = true;
+  const ci = colInfo(table);
+  let saved = null;
+  try { saved = JSON.parse(storeGet("rbox.cols." + table.dataset.cols) || "null"); } catch { /* bozuk kayıt */ }
+  if (Array.isArray(saved) && saved.length === ci.cols.length && saved.every((x) => x >= COL_MIN && x < 5000)) applyCols(table, saved);
+}
+
+/** Fare başlık hücresinin bir kenarındaysa genişliği değişecek sütunun sırası; değilse -1. */
+function edgeColumn(e) {
+  const th = e.target.closest?.("table.fixed[data-cols] > thead th");
+  if (!th) return { th: null, idx: -1 };
+  const r = th.getBoundingClientRect();
+  let cell = null;
+  if (e.clientX >= r.right - COL_EDGE) cell = th;
+  else if (e.clientX <= r.left + COL_EDGE) cell = th.previousElementSibling;
+  if (!cell) return { th, idx: -1 };
+  let idx = 0;
+  for (let p = cell.previousElementSibling; p; p = p.previousElementSibling) idx += p.colSpan || 1;
+  return { th, idx };
+}
+
+/** Sütunun içeriğe sığan genişliği: başlık ve (en çok 600) satırın taşan içeriği dahil. */
+function fitWidth(table, idx) {
+  const ncol = colInfo(table).cols.length;
+  const need = (cell) => {
+    let w = cell.scrollWidth;
+    // Rozet gibi kendi içinde "…" ile kesilen öğeler hücreyi taşırmaz: onların taşan kısmı da eklenir
+    for (const k of cell.querySelectorAll(".badge, b, span")) if (k.scrollWidth > k.clientWidth) w = Math.max(w, cell.clientWidth + k.scrollWidth - k.clientWidth);
+    return w;
+  };
+  let w = 0;
+  const hr = table.tHead?.rows[0];
+  if (hr && hr.cells.length === ncol) w = need(hr.cells[idx]);
+  const rows = table.tBodies[0]?.rows ?? [];
+  for (let i = 0; i < rows.length && i < 600; i++) if (rows[i].cells.length === ncol) w = Math.max(w, need(rows[i].cells[idx]));
+  return Math.min(Math.max(COL_MIN, Math.ceil(w) + 4), 900);
+}
+
+let colResizeOn = false;
+/** Sütun genişliği ayarını tüm sayfada etkinleştirir (bir kez, app.js çağırır). */
+export function installColumnResize() {
+  if (colResizeOn) return;
+  colResizeOn = true;
+  document.querySelectorAll("table.fixed[data-cols]").forEach(restoreCols);
+  new MutationObserver((recs) => {
+    for (const r of recs) for (const n of r.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      if (n.matches("table.fixed[data-cols]")) restoreCols(n);
+      else if (n.firstElementChild) n.querySelectorAll("table.fixed[data-cols]").forEach(restoreCols);
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+
+  let hoverTh = null;
+  document.addEventListener("pointermove", (e) => {
+    if (e.buttons) return;
+    const { th, idx } = edgeColumn(e);
+    if (hoverTh && hoverTh !== th) hoverTh.classList.remove("col-edge");
+    hoverTh = th;
+    th?.classList.toggle("col-edge", idx >= 0);
+  }, { passive: true });
+
+  document.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const { th, idx } = edgeColumn(e);
+    if (idx < 0) return;
+    e.preventDefault();
+    const table = th.closest("table");
+    restoreCols(table);
+    const ci = colInfo(table);
+    // Sürüklemenin başında her sütunun görünen genişliği (dolduran sütun kalan yeri kaplıyor olabilir)
+    const shown = [...table.tHead.rows[0].cells].map((c) => c.getBoundingClientRect().width);
+    const start = e.clientX, w0 = shown[idx] ?? ci.w[idx];
+    let moved = false;
+    document.body.classList.add("col-resizing");
+    // Kenarda basılınca gelen "click" (sürükleme ya da çift tıklama) sıralama yapmasın
+    const stop = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+    table.addEventListener("click", stop, { capture: true });
+    const move = (ev) => {
+      const dx = ev.clientX - start;
+      if (!moved && Math.abs(dx) < 2) return;
+      moved = true;
+      const w = [...ci.w];
+      w[idx] = Math.max(COL_MIN, Math.round(w0 + dx));
+      applyCols(table, w);
+    };
+    const up = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.body.classList.remove("col-resizing");
+      if (moved) applyCols(table, ci.w, true);
+      setTimeout(() => table.removeEventListener("click", stop, { capture: true }), 60);
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  });
+
+  document.addEventListener("dblclick", (e) => {
+    const { th, idx } = edgeColumn(e);
+    if (idx < 0) return;
+    e.preventDefault();
+    const table = th.closest("table");
+    restoreCols(table);
+    const ci = colInfo(table);
+    const w = [...ci.w];
+    w[idx] = fitWidth(table, idx);
+    applyCols(table, w, true);
+  });
+}
 
 /**
  * İki sütunlu ızgaranın arasına sürüklenebilir ayraç koyar (WPF ColumnSplitter gibi): sol sütunun genişliği

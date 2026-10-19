@@ -50,6 +50,52 @@ namespace RboxAgent.Modules.Ping
             }
         }
 
+        /// <summary>
+        /// SSH yanıtı: port 22'ye bağlanır ve sshd'nin karşılama satırını ("SSH-2.0-OpenSSH_9.2p1 …") bekler.
+        /// Port açık olduğu hâlde karşılama gelmiyorsa sshd takılmıştır; güncelleme bu cihazda "SSH banner alınamadı"
+        /// der (eski sürümler "Bağlanılıyor…"da kalırdı). Bekleme süresi güncellemedeki kontrolle aynı tutulur.
+        /// Kullanıcı iptali OperationCanceledException fırlatır.
+        /// </summary>
+        public static async Task<(SshBannerState State, string Banner)> CheckSshBannerAsync(
+            IPAddress ip, int connectTimeoutMs, int bannerTimeoutMs, CancellationToken ct, int port = 22)
+        {
+            using var client = new TcpClient(ip.AddressFamily);
+            using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                connectCts.CancelAfter(connectTimeoutMs);
+                try { await client.ConnectAsync(ip, port, connectCts.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return (SshBannerState.Closed, ""); }
+                catch (SocketException) { return (SshBannerState.Closed, ""); }
+            }
+
+            using var bannerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            bannerCts.CancelAfter(bannerTimeoutMs);
+            var buf = new byte[512];
+            int len = 0;
+            try
+            {
+                var stream = client.GetStream();
+                // RFC 4253: sunucu "SSH-" satırından önce başka satırlar da gönderebilir; tam satır gelene kadar oku
+                while (len < buf.Length)
+                {
+                    int n = await stream.ReadAsync(buf.AsMemory(len), bannerCts.Token).ConfigureAwait(false);
+                    if (n == 0) break;                                   // sunucu bağlantıyı kapattı
+                    len += n;
+                    string text = System.Text.Encoding.ASCII.GetString(buf, 0, len);
+                    int end = 0;
+                    for (int nl = text.IndexOf('\n'); nl >= 0; end = nl + 1, nl = text.IndexOf('\n', end))
+                    {
+                        string line = text[end..nl].TrimEnd('\r');
+                        if (line.StartsWith("SSH-", StringComparison.Ordinal)) return (SshBannerState.Responding, line);
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { /* süre doldu */ }
+            catch (IOException) { }
+            catch (SocketException) { }
+            return (SshBannerState.NoResponse, "");
+        }
+
         // Windows-only SendARP for MAC address
         [DllImport("iphlpapi.dll", ExactSpelling = true)]
         private static extern int SendARP(int DestIP, int SrcIP, byte[] pMacAddr, ref int PhyAddrLen);

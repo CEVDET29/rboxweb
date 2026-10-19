@@ -2,8 +2,12 @@
 
 namespace RboxAgent.Modules.Ping
 {
+    /// <summary>SSH yanıtı kontrolünün sonucu.</summary>
+    public enum SshBannerState { Closed, NoResponse, Responding }
+
     public record CheckOptions(
         bool CheckSsh,
+        bool CheckSshBanner,
         bool CheckMac,
         bool CheckVendor,
         bool SshMacFallback,
@@ -21,6 +25,10 @@ namespace RboxAgent.Modules.Ping
         /// <summary>Ping gidiş-dönüş süresi (ms); yanıt yoksa null.</summary>
         public long? PingMs { get; init; }
         public bool? SshOpen { get; init; }
+        /// <summary>SSH yanıtı (sshd karşılama satırı); kontrol kapalıysa null.</summary>
+        public SshBannerState? SshBanner { get; init; }
+        /// <summary>Karşılama satırı (ör. "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u3"); yoksa boş.</summary>
+        public string SshBannerText { get; init; } = "";
 
         public bool MacChecked { get; init; }
         public string? DetectedMac { get; init; }
@@ -38,12 +46,13 @@ namespace RboxAgent.Modules.Ping
             !IpValid
             || PingOk == false
             || SshOpen == false
+            || (SshBanner != null && SshBanner != SshBannerState.Responding)
             || MacMatch == false
             || (MacChecked && DetectedMac == null);
 
         /// <summary>İzleme modunda değişiklik tespiti için özet imza.</summary>
         public string Signature =>
-            $"{IpValid}|{PingOk}|{SshOpen}|{MacKeyOrEmpty(DetectedMac)}|{MacMatch}";
+            $"{IpValid}|{PingOk}|{SshOpen}|{SshBanner}|{MacKeyOrEmpty(DetectedMac)}|{MacMatch}";
 
         private static string MacKeyOrEmpty(string? mac) => MacAddress.ToKey(mac);
     }
@@ -72,20 +81,29 @@ namespace RboxAgent.Modules.Ping
             long? pingMs = await NetworkTools.PingAsync(ip, opt.PingTimeoutMs, ct).ConfigureAwait(false);
             bool pingOk = pingMs != null;
 
-            // 2) SSH 22/tcp (opsiyonel)
+            // 2) SSH 22/tcp ve SSH yanıtı (opsiyonel). Yanıt kontrolü portu da denediğinden ikisi açıksa tek bağlantı yeter.
             bool? sshOpen = null;
-            if (opt.CheckSsh)
+            SshBannerState? banner = null;
+            string bannerText = "";
+            if (opt.CheckSshBanner)
+            {
+                (var state, bannerText) = await NetworkTools.CheckSshBannerAsync(ip, opt.TcpTimeoutMs, 1500, ct).ConfigureAwait(false);
+                banner = state;
+                if (opt.CheckSsh) sshOpen = state != SshBannerState.Closed;
+            }
+            else if (opt.CheckSsh)
                 sshOpen = await NetworkTools.CheckTcpPortOpenAsync(ip, 22, opt.TcpTimeoutMs, ct).ConfigureAwait(false);
+            bool port22 = sshOpen == true || banner is SshBannerState.Responding or SshBannerState.NoResponse;
 
             // 3) MAC tespiti (opsiyonel): önce ARP, yoksa SSH fallback
             string? detectedMac = null;
             bool macViaSsh = false;
-            if (opt.CheckMac && (pingOk || sshOpen == true))
+            if (opt.CheckMac && (pingOk || port22))
             {
                 detectedMac = NullIfEmpty(MacAddress.ToDisplay(
                     await NetworkTools.GetMacFromArpAsync(ip, ct).ConfigureAwait(false)));
 
-                if (detectedMac == null && opt.SshMacFallback && sshOpen == true && !string.IsNullOrWhiteSpace(opt.SshUser))
+                if (detectedMac == null && opt.SshMacFallback && port22 && banner != SshBannerState.NoResponse && !string.IsNullOrWhiteSpace(opt.SshUser))
                 {
                     var sshMac = await NetworkTools.GetMacViaSshAsync(ip, opt.SshUser, opt.SshPass, opt.SshTimeoutMs, ct)
                                                    .ConfigureAwait(false);
@@ -115,6 +133,8 @@ namespace RboxAgent.Modules.Ping
                 PingOk = pingOk,
                 PingMs = pingMs,
                 SshOpen = sshOpen,
+                SshBanner = banner,
+                SshBannerText = bannerText,
                 MacChecked = opt.CheckMac,
                 DetectedMac = detectedValid ? detectedMac : null,
                 MacViaSsh = macViaSsh,
