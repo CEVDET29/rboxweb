@@ -442,17 +442,25 @@ export function createUpdate(ctx) {
   function setDevices(devices) {
     if (isBusy()) return false;
     rows = []; rooms = []; seq = 0; selected = new Set(); lastClicked = null;
-    let added = 0, skipped = 0;
+    let added = 0, invalid = 0;
+    const dups = new Map(); // tekrarlı IP → listede toplam geçme sayısı
     for (const r of devices.rows) {
       const ip = (r.ip || "").trim();
-      if (!isIpv4(ip) || rows.some((x) => x.ip === ip)) { skipped++; continue; }
+      if (!isIpv4(ip)) { invalid++; continue; }
+      if (rows.some((x) => x.ip === ip)) { dups.set(ip, (dups.get(ip) || 1) + 1); continue; }
       // YATAK ID yalnızca sayı olabilir (JsonSettings'e yazılır); sayı değilse boş bırakılır
       const yatakId = /^\d+$/.test((r.yatakId || "").trim()) ? r.yatakId.trim() : "";
       rows.push(newRow(ip, r.oda, yatakId, r.yatak));
       added++;
     }
     if (devices.rows.length === 0) log("Cihaz listesi kaldırıldı.");
-    else log(skipped === 0 ? `${added} cihaz yüklendi.` : `${added} cihaz yüklendi (${skipped} satır geçersiz / tekrarlı IP, atlandı).`);
+    else {
+      const skipped = invalid + [...dups.values()].reduce((s, n) => s + n - 1, 0);
+      const parts = [];
+      if (dups.size) parts.push("tekrarlı IP: " + [...dups].map(([ip, n]) => `${ip} (${n} kez)`).join(", "));
+      if (invalid) parts.push(`geçersiz IP: ${invalid} satır`);
+      log(skipped === 0 ? `${added} cihaz yüklendi.` : `${added} cihaz yüklendi, ${skipped} satır atlandı — ${parts.join("; ")}.`);
+    }
     render();
     return true;
   }
@@ -554,7 +562,9 @@ export function createUpdate(ctx) {
         <td><input type="checkbox" data-check ${r.checked ? "checked" : ""} ${isBusy() ? "disabled" : ""}></td>
         <td class="mono edit" data-edit="ip"><span class="ipcell">${esc(r.ip)}<button class="copy-ip" data-copy title="IP adresini kopyala">${ICONS.copy}</button></span></td>
         <td title="${esc(r.yatakAdi)}">${esc(r.yatakAdi) || DASH}</td>
-        <td class="mono edit" data-edit="yatakId">${esc(r.yatakId) || `<span class="txt-muted">${DASH}</span>`}</td>
+        <td class="mono edit" data-edit="yatakId">${r.yatakId
+          ? `<span class="ipcell">${esc(r.yatakId)}<button class="copy-ip" data-copy="yatakId" title="Yatak ID'yi kopyala">${ICONS.copy}</button></span>`
+          : `<span class="txt-muted">${DASH}</span>`}</td>
         <td>${badge(r.status, r.statusSev, r.lastMessage || r.status)}</td>
         <td>${badge(r.version, r.versionSev)}</td>
         <td class="mono edit${r.wlan0Auto ? " auto-ip" : ""}" data-edit="wlan0"${r.wlan0Auto ? ' title="Sıralı doldurmayla yazıldı"' : ""}>${esc(r.wlan0)}</td>
@@ -594,7 +604,12 @@ export function createUpdate(ctx) {
     const tr = e.target.closest("tr.item"); if (!tr) return;
     const id = +tr.dataset.id;
     const copyBtn = e.target.closest("[data-copy]");
-    if (copyBtn) { copyIp(rows.find((r) => r.id === id).ip, copyBtn); return; }
+    if (copyBtn) {
+      const r = rows.find((x) => x.id === id);
+      if (copyBtn.dataset.copy === "yatakId") copyIp(String(r.yatakId), copyBtn, "Yatak ID");
+      else copyIp(r.ip, copyBtn);
+      return;
+    }
     if (e.target.matches("input[data-check]")) {
       rows.find((r) => r.id === id).checked = e.target.checked;
       render();
@@ -682,12 +697,12 @@ export function createUpdate(ctx) {
     if (filled) log(`${field}: alttaki ${filled} satır ${start} sonrasından sırayla dolduruldu.`);
   }
 
-  async function copyIp(ip, btn) {
+  async function copyIp(ip, btn, what = "IP") {
     try {
       await copyText(ip);
       btn.classList.add("done"); btn.innerHTML = ICONS.check;
       setTimeout(() => { btn.classList.remove("done"); btn.innerHTML = ICONS.copy; }, 1200);
-      toast("IP kopyalandı: " + ip);
+      toast(`${what} kopyalandı: ${ip}`);
     } catch { toast("Kopyalanamadı"); }
   }
 

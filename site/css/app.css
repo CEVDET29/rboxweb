@@ -283,6 +283,11 @@ tr.item:hover td.actions .btn.icon { visibility: visible; }
 .sev-error { background: var(--error-bg); color: var(--error-text); }
 .sev-info { background: var(--info-bg); color: var(--info-text); }
 .sev-muted { color: var(--text-muted); padding-left: 0; }
+/* Ping "Okunan yatak ID": tüm temalarda aynı dolgu, beyaz yazı (WPF Styles.xaml Bed*Brush) */
+.bed-ok, .bed-bad, .bed-999 { color: #fff; font-family: Consolas, "Cascadia Mono", monospace; padding: 2px 11px; }
+.bed-ok { background: #15803D; }
+.bed-bad { background: #800020; }
+.bed-999 { background: #1D4ED8; }
 .txt-error { color: var(--error-text); font-weight: 600; }
 .txt-muted { color: var(--text-muted); }
 .src { margin-left: 6px; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 5px; background: var(--subtle); color: var(--text-2); }
@@ -339,9 +344,6 @@ input:disabled, select:disabled { opacity: .5; }
 .logline.warn .m { color: var(--warn-text); } .logline.error .m { color: var(--error-text); } .logline.success .m { color: var(--ok-text); }
 
 tr.item.sel td { background: var(--row-selected); }
-/* YBDB yatakları: yatak ID'si cihaz listesinde (Excel) olanlar */
-tr.item.xl td { background: var(--ok-bg); }
-tr.item.xl:hover td { background: color-mix(in srgb, var(--ok-bg) 70%, var(--ok) 30%); }
 td.edit { cursor: text; }
 td.auto-ip { color: var(--text-2); font-style: italic; }
 /* IP hücresindeki "kopyala" düğmesi: satır üzerine gelince belirginleşir */

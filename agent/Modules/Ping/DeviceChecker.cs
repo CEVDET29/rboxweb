@@ -5,12 +5,26 @@ namespace RboxAgent.Modules.Ping
     /// <summary>SSH yanıtı kontrolünün sonucu.</summary>
     public enum SshBannerState { Closed, NoResponse, Responding }
 
+    /// <summary>Cihazdan okunan yatak ID'sinin Excel'dekiyle karşılaştırması.</summary>
+    public enum BedIdState
+    {
+        /// <summary>Okunamadı (SSH yok, dosya / alan yok).</summary>
+        Unread,
+        /// <summary>Okundu, Excel'de yatak ID yok: karşılaştırılmadı.</summary>
+        NoExcel,
+        Match,
+        Mismatch,
+        /// <summary>Cihazdaki değer 999: karşılaştırmadan önce gelir, sorun sayılmaz.</summary>
+        Is999,
+    }
+
     public record CheckOptions(
         bool CheckSsh,
         bool CheckSshBanner,
         bool CheckMac,
         bool CheckVendor,
         bool SshMacFallback,
+        bool CheckBedId,
         string SshUser,
         string SshPass,
         int PingTimeoutMs,
@@ -42,17 +56,25 @@ namespace RboxAgent.Modules.Ping
         /// <summary>null: vendor kontrolü kapalı. "": kontrol açık ama MAC yok.</summary>
         public string? Vendor { get; init; }
 
+        /// <summary>Yatak ID kontrolü kapalıysa null.</summary>
+        public BedIdState? BedId { get; init; }
+        /// <summary>Cihazdaki JsonSettings.json'dan okunan YatakId; okunamadıysa null.</summary>
+        public string? DeviceBedId { get; init; }
+        /// <summary>Okunamadıysa sebebi.</summary>
+        public string? BedIdError { get; init; }
+
         public bool HasProblem =>
             !IpValid
             || PingOk == false
             || SshOpen == false
             || (SshBanner != null && SshBanner != SshBannerState.Responding)
             || MacMatch == false
-            || (MacChecked && DetectedMac == null);
+            || (MacChecked && DetectedMac == null)
+            || BedId == BedIdState.Mismatch;
 
         /// <summary>İzleme modunda değişiklik tespiti için özet imza.</summary>
         public string Signature =>
-            $"{IpValid}|{PingOk}|{SshOpen}|{SshBanner}|{MacKeyOrEmpty(DetectedMac)}|{MacMatch}";
+            $"{IpValid}|{PingOk}|{SshOpen}|{SshBanner}|{MacKeyOrEmpty(DetectedMac)}|{MacMatch}|{DeviceBedId}";
 
         private static string MacKeyOrEmpty(string? mac) => MacAddress.ToKey(mac);
     }
@@ -60,7 +82,7 @@ namespace RboxAgent.Modules.Ping
     public static class DeviceChecker
     {
         public static async Task<DeviceCheckResult> CheckAsync(
-            string ipText, string? excelMacRaw, CheckOptions opt, CancellationToken ct)
+            string ipText, string? excelMacRaw, string? excelBedIdRaw, CheckOptions opt, CancellationToken ct)
         {
             string excelMacDisp = MacAddress.ToDisplay(excelMacRaw);
             bool excelMacValid = MacAddress.IsValid(excelMacDisp);
@@ -99,27 +121,50 @@ namespace RboxAgent.Modules.Ping
             string? detectedMac = null;
             bool macViaSsh = false;
             if (opt.CheckMac && (pingOk || port22))
-            {
                 detectedMac = NullIfEmpty(MacAddress.ToDisplay(
                     await NetworkTools.GetMacFromArpAsync(ip, ct).ConfigureAwait(false)));
 
-                if (detectedMac == null && opt.SshMacFallback && port22 && banner != SshBannerState.NoResponse && !string.IsNullOrWhiteSpace(opt.SshUser))
+            // 4) SSH ile MAC (ARP yoksa) ve yatak ID: ikisi de gerekiyorsa tek bağlantı
+            bool sshUsable = port22 && banner != SshBannerState.NoResponse && !string.IsNullOrWhiteSpace(opt.SshUser);
+            bool wantSshMac = opt.CheckMac && detectedMac == null && opt.SshMacFallback;
+            string? deviceBedId = null, bedError = null;
+            if (sshUsable && (wantSshMac || opt.CheckBedId))
+            {
+                var (sshMac, bed, err) = await NetworkTools.ReadViaSshAsync(
+                    ip, opt.SshUser, opt.SshPass, opt.SshTimeoutMs, wantSshMac, opt.CheckBedId, ct).ConfigureAwait(false);
+                if (wantSshMac)
                 {
-                    var sshMac = await NetworkTools.GetMacViaSshAsync(ip, opt.SshUser, opt.SshPass, opt.SshTimeoutMs, ct)
-                                                   .ConfigureAwait(false);
                     detectedMac = NullIfEmpty(MacAddress.ToDisplay(sshMac));
                     macViaSsh = detectedMac != null;
                 }
+                (deviceBedId, bedError) = (bed, err);
+            }
+            else if (opt.CheckBedId)
+            {
+                bedError = string.IsNullOrWhiteSpace(opt.SshUser) ? "SSH kullanıcı adı girilmemiş (üst banttaki SSH düğmesi)"
+                         : banner == SshBannerState.NoResponse ? "SSH yanıt vermiyor"
+                         : "SSH portu (22) kapalı ya da cihaza ulaşılamıyor";
+            }
+
+            BedIdState? bedState = null;
+            if (opt.CheckBedId)
+            {
+                string excelBed = BedKey(excelBedIdRaw);
+                bedState = deviceBedId == null ? BedIdState.Unread
+                         : deviceBedId == "999" ? BedIdState.Is999
+                         : excelBed.Length == 0 ? BedIdState.NoExcel
+                         : excelBed == deviceBedId ? BedIdState.Match
+                         : BedIdState.Mismatch;
             }
 
             bool detectedValid = MacAddress.IsValid(detectedMac);
 
-            // 4) Excel MAC ↔ cihaz MAC karşılaştırma
+            // 5) Excel MAC ↔ cihaz MAC karşılaştırma
             bool? macMatch = (excelMacValid && detectedValid)
                 ? MacAddress.ToKey(excelMacDisp) == MacAddress.ToKey(detectedMac)
                 : null;
 
-            // 5) Vendor (opsiyonel) — öncelik: cihaz MAC, yoksa Excel MAC
+            // 6) Vendor (opsiyonel) — öncelik: cihaz MAC, yoksa Excel MAC
             string? vendor = null;
             if (opt.CheckVendor)
             {
@@ -142,9 +187,22 @@ namespace RboxAgent.Modules.Ping
                 ExcelMacValid = excelMacValid,
                 MacMatch = macMatch,
                 Vendor = vendor,
+                BedId = bedState,
+                DeviceBedId = deviceBedId,
+                BedIdError = bedError,
             };
         }
 
         private static string? NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+
+        /// <summary>Excel'deki yatak ID'si: "13.0" / " 13 " → "13".</summary>
+        private static string BedKey(string? v)
+        {
+            var t = (v ?? "").Trim();
+            if (decimal.TryParse(t, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var d)
+                && d == decimal.Truncate(d) && d >= 0)
+                return ((long)d).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return t;
+        }
     }
 }

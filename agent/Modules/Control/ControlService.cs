@@ -51,6 +51,8 @@ namespace RboxAgent.Modules.Control
             "c2=$(awk '/^cpu /{t=0; for(i=2;i<=NF;i++) t+=$i; print t, $5+$6}' /proc/stat); " +
             "echo \"CPU=$c1 $c2\"; echo \"NCPU=$(nproc 2>/dev/null)\"; " +
             "echo \"SW=$(systemctl is-active serialworker.service 2>/dev/null)\"; " +
+            // cron.service: açılışta etkin mi | şu an çalışıyor mu (salt okunur; Cihaz Güncelleme enable/disable eder)
+            "echo \"CRON=$(systemctl is-enabled cron.service 2>&1 | head -n1)|$(systemctl is-active cron.service 2>/dev/null)\"; " +
             "echo \"HOST=$(hostname)\"; " +
             "echo \"CARD=$(lsblk -bdno SIZE /dev/mmcblk0 2>/dev/null)\"; " +
             // USB seri portlar (ttyUSB0/ttyUSB1…, ttyACM0…): sysfs'te USB aygıtına çıkılıp VID:PID, üretici, ürün ve

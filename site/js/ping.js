@@ -9,6 +9,7 @@ const isIpv4 = (s) => { const p = String(s || "").trim().split("."); return p.le
 const COLUMNS = [
   { key: "yatak", label: "Yatak", sort: (r) => r.yatak },
   { key: "yatakId", label: "Yatak ID", sort: (r) => r.yatakId },
+  { key: "bedId", label: "Okunan yatak ID", sort: (r) => bedSort(cell(r, "bedId").text) },
   { key: "ip", label: "IP", sort: (r) => r.ip },
   { key: "mac", label: "MAC (Excel)", sort: (r) => r.mac },
   { key: "ping", label: "Ping", sort: (r) => (r.res ? r.res.pingSort : Number.MAX_SAFE_INTEGER) },
@@ -27,11 +28,14 @@ const FILTERS = [
   { id: "problems", label: "Sorunlu", cls: "err" },
 ];
 
-/** Satırın ekranda görünen hücresi (durum: bekliyor / çalışıyor / iptal / sonuç). */
+/** Okunan yatak ID sıralaması: sayılar sayı olarak, "Okunamadı" / "—" en sona (sortCompare boşları sona atar). */
+const bedSort = (t) => (/^\d+$/.test(t) ? +t : "");
+
 /** Hücre içi kopyala düğmesi; yalnızca geçerli MAC adresinde çıkar. */
 const copyBtn = (mac, act, title) => /^[0-9A-F]{2}([:-][0-9A-F]{2}){5}$/i.test(mac || "")
   ? `<button class="copy-ip" data-act="${act}" title="${title}">${ICONS.copy}</button>` : "";
 
+/** Satırın ekranda görünen hücresi (durum: bekliyor / çalışıyor / iptal / sonuç). */
 function cell(r, col) {
   const R = r.res;
   switch (r.state) {
@@ -68,7 +72,7 @@ export function createPing(ctx) {
   let sort = { key: null, dir: 1 };
   let lastRunInfo = "";
   let monitorTimer = null;
-  let cfg = { checkSsh: false, checkSshBanner: false, checkMac: false, checkVendor: false, sshMacFallback: false, monitorIntervalMin: 5, oui: "" };
+  let cfg = { checkSsh: false, checkSshBanner: false, checkMac: false, checkVendor: false, sshMacFallback: false, checkBedId: false, monitorIntervalMin: 5, oui: "" };
 
   // ── İskelet ─────────────────────────────────────────────────
   root.innerHTML = `
@@ -94,6 +98,7 @@ export function createPing(ctx) {
           <label class="chk"><input type="checkbox" id="oMac"> MAC adresi</label>
           <label class="chk" title="ARP'den MAC okunamazsa SSH ile cihazdan okur"><input type="checkbox" id="oFallback"> SSH ile MAC (yedek)</label>
           <label class="chk"><input type="checkbox" id="oVendor"> Üretici</label>
+          <label class="chk" title="Cihazdaki JsonSettings.json'dan YatakId SSH ile okunur ve Excel'deki yatak ID ile karşılaştırılır.&#10;Yeşil: aynı · Bordo: farklı (sorunlu sayılır) · Mavi: 999"><input type="checkbox" id="oBedId"> Yatak ID</label>
           <span class="sm muted">SSH kullanıcı / şifre: üst banttaki <b>SSH</b> düğmesinden (tüm modüller için ortak)</span>
         </div>
       </div>
@@ -111,8 +116,8 @@ export function createPing(ctx) {
         <span class="spacer" style="flex:1"></span>
         <span class="sm muted">Sürekli ping için satıra çift tıklayın</span>
       </div>
-      <div class="table-wrap"><table class="fixed" data-cols="ping" style="min-width:1474px">
-        <colgroup><col style="width:44px"><col style="width:120px"><col style="width:80px"><col style="width:130px"><col style="width:150px"><col style="width:96px"><col style="width:80px"><col style="width:110px"><col style="width:170px"><col><col style="width:150px"><col style="width:244px"></colgroup>
+      <div class="table-wrap"><table class="fixed" data-cols="ping" style="min-width:1604px">
+        <colgroup><col style="width:44px"><col style="width:120px"><col style="width:80px"><col style="width:130px"><col style="width:130px"><col style="width:150px"><col style="width:96px"><col style="width:80px"><col style="width:110px"><col style="width:170px"><col><col style="width:150px"><col style="width:244px"></colgroup>
         <thead><tr id="pHead"></tr></thead>
         <tbody id="pBody"></tbody>
       </table></div>
@@ -142,7 +147,7 @@ export function createPing(ctx) {
   const el = {
     file: q("pFile"), fileSub: q("pFileSub"),
     start: q("pStart"), export: q("pExport"), bar: q("pBar"), status: q("pStatus"),
-    ssh: q("oSsh"), sshb: q("oSshB"), mac: q("oMac"), vendor: q("oVendor"), fallback: q("oFallback"),
+    ssh: q("oSsh"), sshb: q("oSshB"), mac: q("oMac"), vendor: q("oVendor"), fallback: q("oFallback"), bedId: q("oBedId"),
     monitor: q("oMonitor"), monitorText: q("oMonitorText"),
     tiles: q("pTiles"), search: q("pSearch"), count: q("pCount"), head: q("pHead"), body: q("pBody"),
   };
@@ -151,7 +156,7 @@ export function createPing(ctx) {
   async function loadSettings() {
     try { cfg = await api("/api/settings/ping"); } catch { return; }
     el.ssh.checked = cfg.checkSsh; el.sshb.checked = !!cfg.checkSshBanner; el.mac.checked = cfg.checkMac; el.vendor.checked = cfg.checkVendor;
-    el.fallback.checked = cfg.sshMacFallback;
+    el.fallback.checked = cfg.sshMacFallback; el.bedId.checked = !!cfg.checkBedId;
     el.monitorText.textContent = `İzleme modu (her ${cfg.monitorIntervalMin} dk)`;
     updateStatus();
   }
@@ -159,7 +164,7 @@ export function createPing(ctx) {
   const saveSettings = debounce(async () => {
     const body = {
       checkSsh: el.ssh.checked, checkSshBanner: el.sshb.checked, checkMac: el.mac.checked,
-      checkVendor: el.vendor.checked, sshMacFallback: el.fallback.checked,
+      checkVendor: el.vendor.checked, sshMacFallback: el.fallback.checked, checkBedId: el.bedId.checked,
     };
     try {
       await api("/api/settings/ping", { method: "PUT", body });
@@ -167,7 +172,7 @@ export function createPing(ctx) {
     } catch (e) { toast("Ayarlar kaydedilemedi: " + e.message); }
   }, 500);
 
-  [el.ssh, el.sshb, el.mac, el.vendor, el.fallback].forEach((c) => c.addEventListener("change", () => { syncOptionDeps(); saveSettings(); }));
+  [el.ssh, el.sshb, el.mac, el.vendor, el.fallback, el.bedId].forEach((c) => c.addEventListener("change", () => { syncOptionDeps(); saveSettings(); }));
 
   function syncOptionDeps() {
     // "SSH ile MAC" yalnızca MAC ve SSH açıkken anlamlı (WPF ile aynı mantık)
@@ -197,7 +202,7 @@ export function createPing(ctx) {
   }
 
   // ── Kontrol çalıştırma ──────────────────────────────────────
-  const optKey = () => `${el.ssh.checked}|${el.sshb.checked}|${el.mac.checked}|${el.fallback.checked}`;
+  const optKey = () => `${el.ssh.checked}|${el.sshb.checked}|${el.mac.checked}|${el.fallback.checked}|${el.bedId.checked}`;
 
   // ── Elle IP ekleme / satırı kaldırma (WPF PingViewModel.AddIp / RemoveItem) ──
   const newIp = q("pNewIp");
@@ -237,7 +242,7 @@ export function createPing(ctx) {
     updateUi(); render();
 
     try {
-      await stream("/api/ping/run", { rows: list.map((r) => ({ id: r.id, ip: r.ip, mac: r.mac })), quiet: !reset }, (m) => onMessage(m, key, reset), abortCtl.signal);
+      await stream("/api/ping/run", { rows: list.map((r) => ({ id: r.id, ip: r.ip, mac: r.mac, yatakId: r.yatakId })), quiet: !reset }, (m) => onMessage(m, key, reset), abortCtl.signal);
     } catch (e) {
       if (e.name !== "AbortError") {
         toast("Kontrol kesildi: " + e.message);
@@ -324,7 +329,8 @@ export function createPing(ctx) {
     const s = search.trim().toLocaleLowerCase("tr");
     if (!s) return true;
     const dm = R?.mac?.text && R.mac.text !== DASH ? R.mac.text : "";
-    const hay = [rooms[r.room].title, r.yatak, r.yatakId, r.ip, r.mac, dm].join("\n").toLocaleLowerCase("tr");
+    const bed = /^\d+$/.test(R?.bedId?.text || "") ? R.bedId.text : "";
+    const hay = [rooms[r.room].title, r.yatak, r.yatakId, bed, r.ip, r.mac, dm].join("\n").toLocaleLowerCase("tr");
     if (hay.includes(s)) return true;
     const mk = macKey(search);
     return mk.length >= 4 && (macKey(r.mac).includes(mk) || macKey(dm).includes(mk));
@@ -423,11 +429,15 @@ export function createPing(ctx) {
       }
       if (room.collapsed) continue;
 
+      const bed = cell(r, "bedId");
+      const bedHtml = bed.sev.startsWith("bed-") ? `<span class="badge ${bed.sev}">${esc(bed.text)}</span>`
+        : `<span class="mono ${bed.sev === "muted" ? "txt-muted" : ""}">${esc(bed.text)}</span>`;
       const ping = cell(r, "ping"), ssh = cell(r, "ssh"), sshb = cell(r, "sshBanner"), dm = cell(r, "mac"), ven = cell(r, "vendor"), st = cell(r, "status");
       html += `<tr class="item${r.changed ? " changed" : ""}${r.checked ? "" : " off"}" data-id="${r.id}">
         <td><input type="checkbox" data-check ${r.checked ? "checked" : ""} ${running ? "disabled" : ""}></td>
         <td>${esc(r.yatak) || DASH}</td>
         <td>${esc(r.yatakId) || DASH}</td>
+        <td title="${esc(bed.tip || "")}">${bedHtml}</td>
         <td class="mono"><span class="ipcell">${esc(r.ip)}<button class="copy-ip" data-act="copy" title="IP adresini kopyala">${ICONS.copy}</button></span></td>
         <td class="mono ${r.macInvalid ? "txt-error" : ""}" title="${r.macInvalid ? "Geçersiz MAC" : ""}"><span class="ipcell">${esc(r.mac) || DASH}${copyBtn(r.mac, "copyxmac", "Excel'deki MAC'i kopyala")}</span></td>
         <td>${badge(ping)}</td>
@@ -640,9 +650,9 @@ export function createPing(ctx) {
   el.export.addEventListener("click", () => {
     const list = visibleRows();
     if (!list.length) { toast("Dışa aktarılacak satır yok."); return; }
-    const headers = ["ODA ADI", "Yatak ADI", "YATAK ID", "IP", "MAC (Excel)", "Ping", "SSH", "SSH yanıtı", "Cihaz MAC", "MAC kaynağı", "Üretici", "Durum"];
+    const headers = ["ODA ADI", "Yatak ADI", "YATAK ID", "Okunan yatak ID", "IP", "MAC (Excel)", "Ping", "SSH", "SSH yanıtı", "Cihaz MAC", "MAC kaynağı", "Üretici", "Durum"];
     const data = list.map((r) => [
-      rooms[r.room].title, r.yatak, r.yatakId, r.ip, r.mac,
+      rooms[r.room].title, r.yatak, r.yatakId, cell(r, "bedId").text, r.ip, r.mac,
       cell(r, "ping").text, cell(r, "ssh").text, cell(r, "sshBanner").text, cell(r, "mac").text, cell(r, "mac").source || "",
       cell(r, "vendor").text, cell(r, "status").text + (r.changed ? " (değişti)" : ""),
     ]);

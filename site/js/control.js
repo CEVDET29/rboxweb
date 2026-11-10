@@ -118,6 +118,27 @@ function parseHdmi(values, g) {
 }
 
 /** Cihazdan gelen "ANAHTAR=değer" satırlarından kart verisini üretir (WPF ControlDevice.ApplyStats). */
+/**
+ * "CRON=<is-enabled>|<is-active>" → kart rozeti (WPF ControlDevice.ApplyCron ile aynı). Salt okunur:
+ * Cihaz Güncelleme'deki cron seçeneği bu servisi enable/disable eder. Satır yoksa (eski ajan) null.
+ */
+function parseCron(raw) {
+  if (raw == null) return null;
+  const [en0 = "", act0 = ""] = String(raw).split("|");
+  const en = en0.trim(), act = act0.trim();
+  const running = ["active", "activating", "reloading"].includes(act);
+  let text, sev;
+  if (["enabled", "enabled-runtime", "static", "indirect", "generated", "alias"].includes(en)) [text, sev] = running ? ["Etkin", "ok"] : ["Etkin · durmuş", "warn"];
+  else if (en === "disabled") [text, sev] = running ? ["Devre dışı · çalışıyor", "warn"] : ["Devre dışı", "muted"];
+  else if (en === "masked" || en === "masked-runtime") [text, sev] = ["Maskeli", "muted"];
+  else if (!en || en.includes("not-found") || en.includes("No such file")) [text, sev] = ["Kurulu değil", "muted"];
+  else [text, sev] = [en, "muted"];
+  const tip = `cron.service · açılışta: ${en || DASH} · şu an: ${act || DASH}`
+    + (text === "Devre dışı · çalışıyor" ? "\nCihaz yeniden başlatılınca durur" : "")
+    + "\nDeğiştirmek için: Cihaz Güncelleme → cron servisi";
+  return { text, sev, tip };
+}
+
 function parseStats(values, d) {
   const V = Object.fromEntries(Object.entries(values).map(([k, x]) => [k.toLowerCase(), x]));
   const g = (k) => (V[k.toLowerCase()] ? V[k.toLowerCase()] : null);
@@ -161,6 +182,7 @@ function parseStats(values, d) {
   const sw = g("SW") ?? "bilinmiyor";
   s.swText = { active: "Çalışıyor", inactive: "Durdurulmuş", failed: "Hata", activating: "Başlıyor" }[sw] ?? sw;
   s.swSev = { active: "ok", activating: "info", failed: "error" }[sw] ?? "warn";
+  s.cron = parseCron(g("CRON"));
   s.host = g("HOST") ?? "";
 
   // Ağ
@@ -309,31 +331,6 @@ function ventItems(m) {
   ];
 }
 
-const ANIM_KIND = { hr: "beat", spo2: "pulse", rr: "breath" };
-
-/**
- * Monitör simgelerini ölçülen hızda canlandırır: kalp HR hızında atar ("lub-dub"), SpO2 damlası nabızla hafifçe
- * atar, akciğer RR hızında nefes alıp verir. Dalga formu değildir; yalnızca değerin taze olduğunu gösterir.
- */
-function animateIcons(root) {
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  for (const svg of root.querySelectorAll(".pbody:not(.hid) svg[data-rate]")) {
-    const rate = Number(svg.dataset.rate), kind = svg.dataset.anim;
-    if (!(rate >= 1 && rate <= 300) || !kind) continue;
-    const P = 60000 / rate;
-    const f = Math.min(1, (P * 0.9) / 460);                 // vuruş en fazla ~0,46 sn; yüksek hızda periyoda sığar
-    const at = (ms) => Math.min(1, (ms * f) / P);
-    const S = (s) => `scale(${s})`;
-    const frames = kind === "breath"
-      ? [{ transform: S(1), offset: 0, easing: "ease-in-out" }, { transform: S(1.18), offset: 0.4, easing: "ease-in-out" }, { transform: S(1), offset: 1 }]
-      : kind === "beat"
-        ? [{ transform: S(1), offset: 0 }, { transform: S(1.28), offset: at(110) }, { transform: S(1), offset: at(230) },
-           { transform: S(1.13), offset: at(330) }, { transform: S(1), offset: at(460) }, { transform: S(1), offset: 1 }]
-        : [{ transform: S(1), offset: 0 }, { transform: S(1.16), offset: at(140) }, { transform: S(1), offset: at(400) }, { transform: S(1), offset: 1 }];
-    svg.animate(frames, { duration: P, iterations: Infinity });
-  }
-}
-
 export function createControl(ctx) {
   const root = document.createElement("div");
   root.className = "stack";
@@ -467,9 +464,8 @@ export function createControl(ctx) {
 
   // ── Hasta gövdesi ───────────────────────────────────────────
   function vtileHtml(it) {
-    const anim = ANIM_KIND[it.kind] ?? "";
     return `<div class="vt v-${it.kind}${it.dim ? " none" : ""}" title="${esc(it.tip)}">
-      <div class="vh"><svg viewBox="0 0 24 24" ${anim ? `data-anim="${anim}" data-rate="${it.rate}"` : ""}><path d="${VICON[it.kind]}"/></svg>
+      <div class="vh"><svg viewBox="0 0 24 24"><path d="${VICON[it.kind]}"/></svg>
         ${it.kind === "hr" ? "" : `<b>${esc(it.label)}</b>`}<span class="vu">${esc(it.unit)}</span></div>
       <div class="vv">${esc(it.value)}${it.sub ? ` <small>${esc(it.sub)}</small>` : ""}</div></div>`;
   }
@@ -565,6 +561,7 @@ export function createControl(ctx) {
         <span class="muted">Yük <span style="color:var(--text)">${esc(s?.load ?? DASH)}</span></span></div>`;
 
     if (s?.hdmi) h += `<div class="hdmirow" title="${esc(s.hdmi.tip)}"><span class="tk">HDMI</span>${badge(s.hdmi.text, s.hdmi.sev)}</div>`;
+    if (s?.cron) h += `<div class="hdmirow" title="${esc(s.cron.tip)}"><span class="tk">CRON</span>${badge(s.cron.text, s.cron.sev)}</div>`;
     if (s) {
       h += `<div class="tk" style="margin-top:14px">USB</div>` +
         (s.usb.length === 0 ? `<div class="sm muted" style="margin-top:6px">Takılı USB seri aygıt yok</div>` :
@@ -622,7 +619,6 @@ export function createControl(ctx) {
       if (!rm.collapsed) html += `<div class="cards">${items.map(cardHtml).join("")}</div>`;
     }
     el.grid.innerHTML = html;
-    animateIcons(el.grid);
   }
 
   // Hasta sekmesindeki "x dk önce" ve renkler / simge hareketi zamanla değişir: dakikada bir yeniden çiz

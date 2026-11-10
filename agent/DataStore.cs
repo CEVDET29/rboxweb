@@ -142,6 +142,8 @@ namespace RboxAgent
         public bool CheckMac { get; set; }
         public bool CheckVendor { get; set; }
         public bool SshMacFallback { get; set; }
+        /// <summary>Yatak ID: cihazdaki JsonSettings.json'dan YatakId okunup Excel'dekiyle karşılaştırılır.</summary>
+        public bool CheckBedId { get; set; }
 
         public int Concurrency { get; set; } = 16;
         public int PingTimeoutMs { get; set; } = 1000;

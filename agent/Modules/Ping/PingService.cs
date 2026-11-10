@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace RboxAgent.Modules.Ping
 {
-    public sealed record RowIn(int Id, string? Ip, string? Mac);
+    public sealed record RowIn(int Id, string? Ip, string? Mac, string? YatakId = null);
 
     public sealed class RunRequest
     {
@@ -31,6 +31,8 @@ namespace RboxAgent.Modules.Ping
         public Cell SshBanner { get; init; } = new("—", "muted");
         public MacCell Mac { get; init; } = new("—", "", "muted");
         public Cell Vendor { get; init; } = new("—", "muted");
+        /// <summary>Okunan yatak ID; Sev: bed-ok (aynı) / bed-bad (farklı) / bed-999 / none (Excel'de yok) / muted.</summary>
+        public Cell BedId { get; init; } = new("—", "muted");
         public Cell Status { get; init; } = new("", "none");
         public bool? MacMatch { get; init; }
         public bool HasProblem { get; init; }
@@ -57,6 +59,7 @@ namespace RboxAgent.Modules.Ping
             CheckMac: s.CheckMac,
             CheckVendor: s.CheckVendor,
             SshMacFallback: s.SshMacFallback,
+            CheckBedId: s.CheckBedId,
             SshUser: ssh.User.Trim(),
             SshPass: DataStore.Unprotect(ssh.PassProtected),
             PingTimeoutMs: s.PingTimeoutMs,
@@ -97,8 +100,8 @@ namespace RboxAgent.Modules.Ping
                         try
                         {
                             await Safe(new { type = "running", id = row.Id });
-                            var r = await DeviceChecker.CheckAsync(row.Ip ?? "", row.Mac, opt, ct);
-                            await Safe(Present(row.Id, r));
+                            var r = await DeviceChecker.CheckAsync(row.Ip ?? "", row.Mac, row.YatakId, opt, ct);
+                            await Safe(Present(row.Id, r, row.YatakId));
                         }
                         finally { gate.Release(); }
                     }
@@ -130,7 +133,7 @@ namespace RboxAgent.Modules.Ping
 
         // ── Sunum (WPF'teki DeviceItem.ApplyResult / DescribeStatus ile aynı kurallar) ───────
 
-        private static ItemResult Present(int id, DeviceCheckResult r)
+        private static ItemResult Present(int id, DeviceCheckResult r, string? excelBedId)
         {
             Cell ping; long sort;
             if (!r.IpValid) { ping = new(Dash, "muted"); sort = long.MaxValue; }
@@ -163,6 +166,18 @@ namespace RboxAgent.Modules.Ping
                 ? new(Dash, "muted")
                 : new(r.Vendor, r.Vendor.Contains("Raspberry", StringComparison.OrdinalIgnoreCase) ? "none" : "warn");
 
+            string excel = (excelBedId ?? "").Trim() is { Length: > 0 } e ? e : "yok";
+            string path = "\n" + NetworkTools.JsonSettingsPath;
+            Cell bedId = r.BedId switch
+            {
+                BedIdState.Unread => new(r.IpValid ? "Okunamadı" : Dash, "muted", r.BedIdError + path),
+                BedIdState.Is999 => new("999", "bed-999", $"Cihazdaki yatak ID 999 (Excel: {excel})" + path),
+                BedIdState.Match => new(r.DeviceBedId!, "bed-ok", "Excel'deki yatak ID ile aynı" + path),
+                BedIdState.Mismatch => new(r.DeviceBedId!, "bed-bad", $"Excel'deki yatak ID farklı: {excel}" + path),
+                BedIdState.NoExcel => new(r.DeviceBedId!, "none", "Excel'de yatak ID yok, karşılaştırılmadı" + path),
+                _ => new(Dash, "muted"),
+            };
+
             return new ItemResult
             {
                 Id = id,
@@ -174,6 +189,7 @@ namespace RboxAgent.Modules.Ping
                 SshBanner = sshBanner,
                 Mac = mac,
                 Vendor = vendor,
+                BedId = bedId,
                 Status = DescribeStatus(r),
                 MacMatch = r.MacMatch,
                 HasProblem = r.HasProblem,
@@ -195,6 +211,7 @@ namespace RboxAgent.Modules.Ping
             if (r.PingOk != true && !port22) return new("Ulaşılamıyor", "warn");
             if (r.SshOpen == false || r.SshBanner == SshBannerState.Closed) return new("SSH kapalı", "warn");
             if (r.SshBanner == SshBannerState.NoResponse) return new("SSH yanıt vermiyor", "error");
+            if (r.BedId == BedIdState.Mismatch) return new("Yatak ID farklı", "error");
             if (r.MacChecked && r.DetectedMac == null) return new("MAC okunamadı", "warn");
             if (r.ExcelMacDisplay.Length > 0 && !r.ExcelMacValid) return new("Excel MAC geçersiz", "warn");
             if (r.MacMatch == true) return new("Eşleşiyor", "ok");

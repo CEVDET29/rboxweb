@@ -169,7 +169,7 @@ namespace RboxAgent
                     OuiLookup.Preload();
                     await Reply(res, new
                     {
-                        ping.CheckSsh, ping.CheckSshBanner, ping.CheckMac, ping.CheckVendor, ping.SshMacFallback,
+                        ping.CheckSsh, ping.CheckSshBanner, ping.CheckMac, ping.CheckVendor, ping.SshMacFallback, ping.CheckBedId,
                         ping.Concurrency, ping.PingTimeoutMs, ping.TcpTimeoutMs, ping.SshTimeoutMs, ping.MonitorIntervalMin,
                         oui = OuiLookup.SourceDescription,
                     });
@@ -183,6 +183,7 @@ namespace RboxAgent
                     if (b.CheckMac is bool a2) ping.CheckMac = a2;
                     if (b.CheckVendor is bool a3) ping.CheckVendor = a3;
                     if (b.SshMacFallback is bool a4) ping.SshMacFallback = a4;
+                    if (b.CheckBedId is bool a6) ping.CheckBedId = a6;
                     if (b.MonitorIntervalMin is int mi) ping.MonitorIntervalMin = Math.Clamp(mi, 1, 120);
                     DataStore.Save();
                     await Reply(res, new { ok = true });
@@ -731,6 +732,7 @@ namespace RboxAgent
             public bool? CheckMac { get; set; }
             public bool? CheckVendor { get; set; }
             public bool? SshMacFallback { get; set; }
+            public bool? CheckBedId { get; set; }
             public int? MonitorIntervalMin { get; set; }
         }
 

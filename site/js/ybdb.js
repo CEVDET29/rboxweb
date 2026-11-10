@@ -1,6 +1,6 @@
 // YBDB Odalar modülü: SQL Server'daki oda / yatak kayıtları ve doluluk (salt okunur). WPF YbdbView karşılığı.
 import { api } from "./api.js";
-import { $, esc, debounce, toast, unitColor, sortCompare, columnSplitter, gridButton, ICONS } from "./util.js";
+import { $, esc, debounce, toast, unitColor, sortCompare, columnSplitter, gridButton, copyText, storeGet, storeSet, ICONS } from "./util.js";
 import { createCihazEditor } from "./ybdbcihaz.js";
 
 const DASH = "—";
@@ -44,7 +44,9 @@ export function createYbdb() {
   let odaSearch = "", yatakSearch = "", sadeceBos = false;
   let sortOda = { key: null, dir: 1 }, sortYatak = { key: null, dir: 1 };
   let cfg = { server: "", user: "RasyoUser", remember: false, hasPass: false };
-  let excelYatak = new Set();      // ortak cihaz listesindeki (Excel) yatak ID'leri: eşleşen yataklar yeşil
+  let excelYatak = new Map();      // ortak cihaz listesi (Excel): yatak ID anahtarı → o ID'li satırların IP'leri
+  let xlCompare = storeGet("rbox.ybdb.xlCompare", "1") !== "0";   // "Excel ile karşılaştır": eşleşen Yatak ID yeşil etiket
+  let xlIp = storeGet("rbox.ybdb.xlIp", "1") !== "0";             // "Excel IP'sini göster": Yatak ile Yatak ID arasında IP sütunu
 
   root.innerHTML = `
     <section class="card">
@@ -106,10 +108,10 @@ export function createYbdb() {
         <div class="card-b row" style="padding-bottom:8px">
           <input type="search" id="yYatakSearch" placeholder="Yatak ara: hasta, yatak, oda…  (Ctrl+F)" style="width:340px;max-width:100%">
           <label class="chk"><input type="checkbox" id="yBosOnly"> Sadece boş yataklar</label>
+          <label class="chk" title="Yatak ID'si cihaz listesinde (Excel) olan yatakların Yatak ID'si yeşil etiketle gösterilir"><input type="checkbox" id="yXlCompare"> Excel ile karşılaştır</label>
+          <label class="chk" title="Yatak ile Yatak ID arasında, cihaz listesinde (Excel) aynı yatak ID'ye denk gelen satırın IP adresi"><input type="checkbox" id="yXlIp"> Excel IP'sini göster</label>
         </div>
-        <div class="table-wrap" style="max-height:calc(100vh - 380px + var(--gain, 0px))"><table class="fixed" data-cols="ybdb-yatak" style="min-width:1040px">
-          <colgroup><col style="width:70px"><col><col style="width:80px"><col style="width:150px"><col style="width:80px"><col style="width:150px"><col style="width:130px"><col style="width:80px"></colgroup>
-          <thead><tr id="yYatakHead"></tr></thead><tbody id="yYatakBody"></tbody></table></div>
+        <div class="table-wrap" id="yYatakWrap" style="max-height:calc(100vh - 380px + var(--gain, 0px))"></div>
       </section>
     </div>
     </div>
@@ -123,7 +125,7 @@ export function createYbdb() {
     summary: q("ySummary"), legend: q("yLegend"),
     odaCount: q("yOdaCount"), odaSearch: q("yOdaSearch"), odaHead: q("yOdaHead"), odaBody: q("yOdaBody"),
     title: q("yYatakTitle"), ozet: q("yYatakOzet"), all: q("yAll"), yatakSearch: q("yYatakSearch"),
-    bosOnly: q("yBosOnly"), yatakHead: q("yYatakHead"), yatakBody: q("yYatakBody"),
+    bosOnly: q("yBosOnly"), xlCompare: q("yXlCompare"), xlIp: q("yXlIp"), yatakWrap: q("yYatakWrap"), yatakHead: null, yatakBody: null,
   };
 
   // ── Cihazlar sekmesi (dbo.Cihaz: ekle / güncelle / sil) ─────────
@@ -240,8 +242,8 @@ export function createYbdb() {
     let list = data.yataklar.filter((y) =>
       (selectedOda == null || y.odaId === selectedOda) &&
       (!sadeceBos || y.hastaId == null) &&
-      (!s || [y.hastaAdi, y.hastaId, y.yatakAdi, y.odaAdi, y.bolumAdi].some((v) => tr(v).includes(s))));
-    const c = YATAK_COLS.find((x) => x.key === sortYatak.key);
+      (!s || [y.hastaAdi, y.hastaId, y.yatakAdi, y.odaAdi, y.bolumAdi, xlIp ? xlInfo(y).ip : ""].some((v) => tr(v).includes(s))));
+    const c = yatakCols().find((x) => x.key === sortYatak.key);
     if (c) list = [...list].sort((a, b) => sortCompare(c.val(a), c.val(b), sortYatak.dir));
     return list;
   }
@@ -288,30 +290,65 @@ export function createYbdb() {
     }).join("") : `<tr><td class="empty" colspan="4">Aramaya uyan oda yok.</td></tr>`;
   }
 
+  /** Bir yatağın Excel eşleşmesi: match = yatak ID Excel'de var; ip = ilk IP ("" = IP'siz satır, null = eşleşme yok); tip = ipucu. */
+  function xlInfo(y) {
+    const ips = excelYatak.get(yatakKey(y.yatakId));
+    if (!ips) return { match: false, ip: null, tip: "Bu yatak ID cihaz listesinde (Excel) yok" };
+    const withIp = [...new Set(ips.filter((i) => i))];
+    return { match: true, ip: withIp[0] ?? "",
+      tip: withIp.length === 0 ? "Excel'de bu yatak ID var ama IP adresi yok"
+        : withIp.length === 1 ? "Excel'de bu yatak ID'nin IP adresi"
+        : "Excel'de bu yatak ID'ye birden çok satır denk geliyor: " + withIp.join(", ") };
+  }
+
+  /** Görünen yatak sütunları: "Excel IP'sini göster" açıksa Yatak ile Yatak ID arasına IP sütunu girer. */
+  function yatakCols() {
+    if (!xlIp) return YATAK_COLS;
+    const i = YATAK_COLS.findIndex((c) => c.key === "yatakId");
+    return [...YATAK_COLS.slice(0, i), { key: "xlIp", label: "Excel IP", val: (y) => xlInfo(y).ip ?? "" }, ...YATAK_COLS.slice(i)];
+  }
+
+  /** Yatak tablosunu sütun düzeniyle kurar; IP sütunu açılıp kapanınca yeniden kurulur. Genişlikler düzene göre ayrı saklanır. */
+  function buildYatakTable() {
+    const w = ["70px", "", "80px", "150px", ...(xlIp ? ["150px"] : []), "80px", "150px", "130px", "80px"];
+    el.yatakWrap.innerHTML = `<table class="fixed" data-cols="${xlIp ? "ybdb-yatak-ip" : "ybdb-yatak"}" style="min-width:${xlIp ? 1190 : 1040}px">
+      <colgroup>${w.map((x) => (x ? `<col style="width:${x}">` : "<col>")).join("")}</colgroup>
+      <thead><tr id="yYatakHead"></tr></thead><tbody id="yYatakBody"></tbody></table>`;
+    el.yatakHead = q("yYatakHead"); el.yatakBody = q("yYatakBody");
+  }
+  buildYatakTable();
+
   function renderYataklar() {
-    el.yatakHead.innerHTML = headHtml(YATAK_COLS, sortYatak);
+    const cols = yatakCols(), n = cols.length;
+    el.yatakHead.innerHTML = headHtml(cols, sortYatak);
     const oda = data?.odalar.find((o) => o.id === selectedOda);
     el.title.textContent = selectedOda == null ? "YATAKLAR · TÜMÜ" : `YATAKLAR · ${(oda?.adi ?? "").toLocaleUpperCase("tr")}`;
     el.all.hidden = selectedOda == null;
-    if (!data) { el.yatakBody.innerHTML = `<tr><td class="empty" colspan="8">Bağlandıktan sonra listelenir.</td></tr>`; el.ozet.textContent = "Bağlandıktan sonra listelenir"; return; }
+    if (!data) { el.yatakBody.innerHTML = `<tr><td class="empty" colspan="${n}">Bağlandıktan sonra listelenir.</td></tr>`; el.ozet.textContent = "Bağlandıktan sonra listelenir"; return; }
 
     const list = visibleYataklar();
     const dolu = list.filter((y) => y.hastaId != null).length;
     const xl = list.filter((y) => excelYatak.has(yatakKey(y.yatakId))).length;
-    el.ozet.textContent = `${list.length} yatak  ·  ${dolu} dolu  ·  ${list.length - dolu} boş` + (excelYatak.size ? `  ·  ${xl} Excel'de` : "");
+    el.ozet.textContent = `${list.length} yatak  ·  ${dolu} dolu  ·  ${list.length - dolu} boş` + (xlCompare && excelYatak.size ? `  ·  ${xl} Excel'de` : "");
     el.yatakBody.innerHTML = list.length ? list.map((y) => {
       const isDolu = y.hastaId != null;
-      const inXl = excelYatak.has(yatakKey(y.yatakId));
-      return `<tr class="item${inXl ? " xl" : ""}"${inXl ? ` title="Bu yatak ID cihaz listesinde (Excel) var"` : ""}>
+      const xi = xlInfo(y);
+      const ipCell = !xlIp ? ""
+        : xi.ip ? `<td class="mono" title="${esc(xi.tip)}"><span class="ipcell">${esc(xi.ip)}<button class="copy-ip" data-copyip="${esc(xi.ip)}" title="IP adresini kopyala">${ICONS.copy}</button></span></td>`
+        : `<td class="txt-muted" title="${esc(xi.tip)}">${xi.match ? "IP yok" : DASH}</td>`;
+      const idCell = xlCompare && xi.match
+        ? `<td><span class="badge bed-ok" title="Bu yatak ID cihaz listesinde (Excel) var">${esc(y.yatakId)}</span></td>`
+        : `<td class="mono">${esc(y.yatakId)}</td>`;
+      return `<tr class="item">
         <td><span class="badge ${isDolu ? "sev-info" : "sev-ok"}">${esc(y.durum)}</span></td>
         <td title="${esc(y.hastaAdi ?? "")}">${y.hastaAdi ? `<b>${esc(y.hastaAdi)}</b>` : `<span class="txt-muted">${DASH}</span>`}</td>
         <td class="mono">${esc(y.hastaId) || DASH}</td>
         <td title="${esc(y.yatakAdi)}">${esc(y.yatakAdi)}</td>
-        <td class="mono">${esc(y.yatakId)}</td>
+        ${ipCell}${idCell}
         <td title="${esc(y.odaAdi)}">${chip(y.renk, y.odaAdi)}</td>
         <td title="${esc(y.bolumAdi)}">${esc(y.bolumAdi) || DASH}</td>
         <td class="mono">${esc(y.basamak) || DASH}</td></tr>`;
-    }).join("") : `<tr><td class="empty" colspan="8">Filtreye uyan yatak yok.</td></tr>`;
+    }).join("") : `<tr><td class="empty" colspan="${n}">Filtreye uyan yatak yok.</td></tr>`;
   }
 
   function renderAll() { renderSummary(); renderOdalar(); renderYataklar(); }
@@ -329,8 +366,18 @@ export function createYbdb() {
     sortOda = sortOda.key === th.dataset.k ? { key: th.dataset.k, dir: -sortOda.dir } : { key: th.dataset.k, dir: 1 };
     renderOdalar();
   });
-  el.yatakHead.addEventListener("click", (e) => {
-    const th = e.target.closest("th[data-k]"); if (!th) return;
+  el.yatakWrap.addEventListener("click", async (e) => {
+    const cp = e.target.closest("[data-copyip]");
+    if (cp) {
+      try {
+        await copyText(cp.dataset.copyip);
+        cp.classList.add("done"); cp.innerHTML = ICONS.check;
+        setTimeout(() => { cp.classList.remove("done"); cp.innerHTML = ICONS.copy; }, 1200);
+        toast("IP kopyalandı: " + cp.dataset.copyip);
+      } catch { toast("Kopyalanamadı"); }
+      return;
+    }
+    const th = e.target.closest("thead th[data-k]"); if (!th) return;
     sortYatak = sortYatak.key === th.dataset.k ? { key: th.dataset.k, dir: -sortYatak.dir } : { key: th.dataset.k, dir: 1 };
     renderYataklar();
   });
@@ -338,6 +385,13 @@ export function createYbdb() {
   el.odaSearch.addEventListener("input", debounce(() => { odaSearch = el.odaSearch.value; renderOdalar(); }, 120));
   el.yatakSearch.addEventListener("input", debounce(() => { yatakSearch = el.yatakSearch.value; renderYataklar(); }, 120));
   el.bosOnly.addEventListener("change", () => { sadeceBos = el.bosOnly.checked; renderYataklar(); });
+  el.xlCompare.checked = xlCompare; el.xlIp.checked = xlIp;
+  el.xlCompare.addEventListener("change", () => { xlCompare = el.xlCompare.checked; storeSet("rbox.ybdb.xlCompare", xlCompare ? "1" : "0"); renderYataklar(); });
+  el.xlIp.addEventListener("change", () => {
+    xlIp = el.xlIp.checked; storeSet("rbox.ybdb.xlIp", xlIp ? "1" : "0");
+    if (!xlIp && sortYatak.key === "xlIp") sortYatak = { key: null, dir: 1 };
+    buildYatakTable(); renderYataklar();
+  });
 
   document.addEventListener("keydown", (e) => {
     if (root.offsetParent === null) return;                       // modül görünür değil
@@ -349,7 +403,12 @@ export function createYbdb() {
 
   /** Ortak cihaz listesi değişince: Excel'deki yatak ID'leri YBDB yataklarıyla eşleşenleri vurgulamak için. */
   function setDevices(devices) {
-    excelYatak = new Set(devices.rows.map((d) => yatakKey(d.yatakId)).filter((k) => k !== ""));
+    excelYatak = new Map();
+    for (const d of devices.rows) {
+      const k = yatakKey(d.yatakId); if (k === "") continue;
+      if (!excelYatak.has(k)) excelYatak.set(k, []);
+      excelYatak.get(k).push(String(d.ip ?? "").trim());
+    }
     renderYataklar();
   }
 

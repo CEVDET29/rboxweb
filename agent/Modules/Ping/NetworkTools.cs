@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace RboxAgent.Modules.Ping
 {
@@ -173,6 +174,76 @@ namespace RboxAgent.Modules.Ping
             catch
             {
                 return null; // zaman aşımı, kimlik doğrulama hatası vb.
+            }
+        }
+
+        public const string JsonSettingsPath = "/var/www/consoleApps/publish/JsonSettings.json";
+        private static readonly Regex BedIdRx = new(@"""YatakId""\s*:\s*""?(\d+)", RegexOptions.IgnoreCase);
+
+        /// <summary>
+        /// Tek SSH bağlantısında istenenleri okur: MAC (wantMac) ve JsonSettings.json'daki YatakId (wantBed).
+        /// Bağlantı kurulamazsa BedError "Bağlanılamadı" olur; dosya / alan yoksa sebebi yazar.
+        /// </summary>
+        public static async Task<(string? Mac, string? BedId, string? BedError)> ReadViaSshAsync(
+            IPAddress ip, string user, string pass, int timeoutMs, bool wantMac, bool wantBed, CancellationToken ct)
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeoutMs * (wantMac && wantBed ? 2 : 1));
+            string? mac = null;
+            try
+            {
+                var ci = new ConnectionInfo(ip.ToString(), user, new PasswordAuthenticationMethod(user, pass))
+                {
+                    Timeout = TimeSpan.FromMilliseconds(timeoutMs)
+                };
+
+                using var cli = new SshClient(ci);
+                // İç ağdaki cihazlar için bilinçli tercih: host key doğrulanmıyor, tüm anahtarlar kabul ediliyor.
+                cli.HostKeyReceived += (_, e) => e.CanTrust = true;
+
+                await cli.ConnectAsync(timeoutCts.Token).ConfigureAwait(false);
+                if (!cli.IsConnected) return (null, null, "SSH bağlantısı kurulamadı");
+
+                if (wantMac)
+                {
+                    using var cmd = cli.CreateCommand(
+                        "sh -c 'for i in /sys/class/net/*; do n=${i##*/}; " +
+                        " [ \"$n\" = lo ] && continue; " +
+                        " addr=$(cat $i/address 2>/dev/null); " +
+                        " st=$(cat $i/operstate 2>/dev/null); " +
+                        " if [ -n \"$addr\" ]; then echo \"$n $addr $st\"; fi; " +
+                        "done'");
+                    cmd.CommandTimeout = TimeSpan.FromMilliseconds(timeoutMs);
+                    await cmd.ExecuteAsync(timeoutCts.Token).ConfigureAwait(false);
+                    mac = ParseMacFromInterfaceList(cmd.Result);
+                }
+
+                string? bedId = null, bedError = null;
+                if (wantBed)
+                {
+                    using var cmd = cli.CreateCommand($"cat {JsonSettingsPath} 2>/dev/null || echo __RBOX_NOFILE__");
+                    cmd.CommandTimeout = TimeSpan.FromMilliseconds(timeoutMs);
+                    await cmd.ExecuteAsync(timeoutCts.Token).ConfigureAwait(false);
+                    string text = cmd.Result ?? "";
+                    var m = BedIdRx.Match(text);
+                    if (m.Success) bedId = long.TryParse(m.Groups[1].Value, out long n) ? n.ToString() : m.Groups[1].Value;
+                    else bedError = text.Contains("__RBOX_NOFILE__") ? "JsonSettings.json bulunamadı" : "JsonSettings.json içinde YatakId yok";
+                }
+
+                cli.Disconnect();
+                return (mac, bedId, bedError);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw; // kullanıcı iptali yukarı gitsin
+            }
+            catch (Renci.SshNet.Common.SshAuthenticationException)
+            {
+                return (mac, null, "SSH kullanıcı adı / şifre kabul edilmedi");
+            }
+            catch
+            {
+                return (mac, null, "SSH bağlantısı kurulamadı (zaman aşımı)");
             }
         }
 
