@@ -787,6 +787,15 @@ table.fixed[data-cols] > thead th:last-child { box-shadow: none; }
 .meterrow b.warn { color: var(--warn-text); } .meterrow b.error { color: var(--error-text); } .meterrow b.none { color: var(--text-muted); }
 .hdmirow { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
 .hdmirow .badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* CRON + SWTUI tek satırda, durum simgeyle */
+.svcrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; margin-top: 14px; }
+.svcrow > span { display: inline-flex; align-items: center; gap: 8px; }
+.sglyph { display: inline-grid; place-items: center; width: 16px; height: 16px; }
+.sglyph svg { width: 15px; height: 15px; }
+.sglyph.ok { color: var(--ok-text); } .sglyph.warn { color: var(--warn-text); } .sglyph.off { color: var(--text-muted); }
+.svcrow .sver { font-size: 11.5px; margin-left: -2px; }
+/* Kart başlığındaki IP kopyala düğmesi */
+.copy-ip.ccopy { width: 20px; height: 20px; margin: 0 4px 0 2px; vertical-align: middle; opacity: .6; }
 
 /* SSH / SQL şifre kutuları: type="password" değil, yazı noktalarla gizlenir; tarayıcı "şifre kaydedilsin mi?" diye sormaz
    (bu şifreler ajanda saklanır, tarayıcının şifre yöneticisine girmemeli). Giriş ekranındaki site şifresi normal kalır. */

@@ -20,6 +20,9 @@ const SISTEM = [
   { k: "rebootAfter", label: "Yeniden başlat" },
   { k: "webServer", label: "Web server",
     tip: "RasyoBOX web arayüzünü kurar.\nupdateFiles\\rasyobox-*.tar.gz (en yüksek sürümlü arşiv) cihazın /home/pi klasörüne kopyalanır,\naçılır ve 'sudo bash install.sh' çalıştırılır.\nArşivin içindeki klasör adı ne olursa olsun install.sh bulunup çalıştırılır.\nKurulum bitince arşiv ve açılan klasör cihazdan silinir." },
+  // noAll: "Tümünü seç" ve grup kutusu işaretlemez (WPF ile aynı; her cihaza istemeden kurulmasın)
+  { k: "swtui", label: "swtui", noAll: true,
+    tip: "swtui terminal arayüzünü kurar / günceller (açılışta otomatik başlar).\nupdateFiles\\swtui-*.tar.gz (en yüksek sürümlü paket) cihaza kopyalanır, açılır ve swtui-kur.sh SSH kullanıcısıyla çalıştırılır.\nSerialWorker DLL'ine, servisine ve SQL ayarlarına dokunmaz.\nKurulum bitince paket ve açılan klasör cihazdan silinir.\n\"Tümünü seç\" bu seçeneği işaretlemez." },
 ];
 const AG = [
   { k: "dhcpcd", label: "dhcpcd", file: "dhcpcd.txt" },
@@ -36,8 +39,10 @@ const DOSYA = [
   { k: "rasyoClean", label: "rasyoclean.sh" },
   { k: "swHelpLogService", label: "sw -help ve logservice" },
 ];
-const GROUPS = { sistem: SISTEM, ag: AG, dosya: DOSYA };
+const selectable = (list) => list.filter((o) => !o.noAll);
+const GROUPS = { sistem: selectable(SISTEM), ag: selectable(AG), dosya: selectable(DOSYA) };
 const ALL_KEYS = [...SISTEM, ...AG, ...DOSYA].map((o) => o.k);
+const SEL_KEYS = selectable([...SISTEM, ...AG, ...DOSYA]).map((o) => o.k);
 
 const CONSPY_TIP = "conspy: başka bir tty'yi izlemeye yarayan araç.\n\napt-get: internet gerektirir. Cihaz internete çıkamıyorsa adım atlanır,\ndiğer güncellemeler etkilenmez.\n\nçevrimdışı: cihazdaki /home/pi/conspy_1.16-1_armhf.deb paketinden kurar.\nPaket cihazda yoksa updateFiles klasöründen gönderilir; iki yerde de yoksa uyarı verilir.";
 const AUTOLOGIN_TIP = "tty1 konsolunda otomatik giriş.\nDisable: /etc/systemd/system/getty@tty1.service.d/autologin.conf silinir,\ndaemon-reload + getty@tty1 restart uygulanır (reboot gerekmez).\nEnable: autologin.conf yeniden oluşturulur.";
@@ -403,7 +408,7 @@ export function createUpdate(ctx) {
     if (chip) { opt[chip.dataset.radio] = chip.dataset.v; syncOptionsUi(); }
   });
 
-  q("uSelAll").addEventListener("click", () => { ALL_KEYS.forEach((k) => (opt[k] = true)); syncOptionsUi(); });
+  q("uSelAll").addEventListener("click", () => { SEL_KEYS.forEach((k) => (opt[k] = true)); syncOptionsUi(); });
   q("uSelNone").addEventListener("click", () => {
     ALL_KEYS.forEach((k) => (opt[k] = false));
     opt.cronService = opt.autologin = opt.conspy = "None";
@@ -562,9 +567,7 @@ export function createUpdate(ctx) {
         <td><input type="checkbox" data-check ${r.checked ? "checked" : ""} ${isBusy() ? "disabled" : ""}></td>
         <td class="mono edit" data-edit="ip"><span class="ipcell">${esc(r.ip)}<button class="copy-ip" data-copy title="IP adresini kopyala">${ICONS.copy}</button></span></td>
         <td title="${esc(r.yatakAdi)}">${esc(r.yatakAdi) || DASH}</td>
-        <td class="mono edit" data-edit="yatakId">${r.yatakId
-          ? `<span class="ipcell">${esc(r.yatakId)}<button class="copy-ip" data-copy="yatakId" title="Yatak ID'yi kopyala">${ICONS.copy}</button></span>`
-          : `<span class="txt-muted">${DASH}</span>`}</td>
+        <td class="mono edit" data-edit="yatakId">${r.yatakId ? esc(r.yatakId) : `<span class="txt-muted">${DASH}</span>`}</td>
         <td>${badge(r.status, r.statusSev, r.lastMessage || r.status)}</td>
         <td>${badge(r.version, r.versionSev)}</td>
         <td class="mono edit${r.wlan0Auto ? " auto-ip" : ""}" data-edit="wlan0"${r.wlan0Auto ? ' title="Sıralı doldurmayla yazıldı"' : ""}>${esc(r.wlan0)}</td>
@@ -605,9 +608,7 @@ export function createUpdate(ctx) {
     const id = +tr.dataset.id;
     const copyBtn = e.target.closest("[data-copy]");
     if (copyBtn) {
-      const r = rows.find((x) => x.id === id);
-      if (copyBtn.dataset.copy === "yatakId") copyIp(String(r.yatakId), copyBtn, "Yatak ID");
-      else copyIp(r.ip, copyBtn);
+      copyIp(rows.find((x) => x.id === id).ip, copyBtn);
       return;
     }
     if (e.target.matches("input[data-check]")) {

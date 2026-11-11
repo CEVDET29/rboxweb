@@ -2,7 +2,7 @@
 // Her kartta "Cihaz | Hasta" sekmesi: Hasta, yataktaki hastayı ve son monitör / ventilatör değerlerini YBDB'den gösterir.
 // WPF ControlView / ControlDevice / ControlPatient / ControlViewModel karşılığı. SSH ve SQL okuması ajandadır; biçimlendirme burada.
 import { api, stream } from "./api.js";
-import { $, $$, esc, toast, unitColor, ipFilter, ICONS, storeGet, storeSet } from "./util.js";
+import { $, $$, esc, toast, unitColor, ipFilter, ICONS, storeGet, storeSet, copyText } from "./util.js";
 
 const DASH = "—";
 
@@ -78,22 +78,32 @@ function edidName(b64) {
 }
 
 /**
- * HDMI kablosu takılı mı (WPF ControlDevice.ApplyHdmi). KMS: "HDMI_card1-HDMI-A-1=connected|<EDID base64>";
- * eski sürücü: TVS = "tvservice -s" (bit 0x2 takılı, 0x1 takılı değil), TVN = "tvservice -n" (device_name=…).
- * hdmi_force_hotplug açıksa kablo yokken de "bağlı" görünür. Bilgi gelmezse null.
+ * HDMI kablosu takılı mı + ayrıntılar (WPF ControlDevice.ApplyHdmi ile aynı).
+ * KMS: "HDMI_card1-HDMI-A-1=connected|<EDID base64>|<ilk mod>|<mod sayısı>" (son iki alan eski ajanda yok);
+ * eski sürücü: TVS = "tvservice -s" (bit 0x2 takılı, 0x1 takılı değil; çözünürlük), TVN = "tvservice -n" (device_name=…).
+ * FB = görüntü belleği modu|boyutu (aktif çözünürlük), VIDEO = çekirdek satırındaki video=, HCFG = config.txt hdmi_* satırları.
+ * Bağlı ama EDID boşsa ekran kendini tanıtmıyor (KVM / çevirici / ekran kapalı / kablo) → uyarı.
+ * hdmi_force_hotplug=1 ya da video=HDMI-A-1:…D (…e) bağlantıyı zorlar: kablo yokken de "bağlı" görünür. Bilgi gelmezse null.
  */
 function parseHdmi(values, g) {
+  const edidLen = (b64) => { if (!b64) return 0; try { return atob(b64).length; } catch { return null; } };
+  // Boş değer de "geldi" sayılır (ör. VIDEO= → video= ayarı yok); anahtar hiç yoksa (eski ajan) null
+  const raw = (k) => { const e = Object.entries(values).find(([x]) => x.toLowerCase() === k.toLowerCase()); return e ? String(e[1] ?? "") : null; };
   const ports = [];
   for (const [k, v] of Object.entries(values)) {
     if (!/^hdmi_/i.test(k)) continue;
     const key = k.slice(5), a = key.lastIndexOf("-A-");
     const port = a >= 0 ? "HDMI-" + key.slice(a + 3) : key;           // card1-HDMI-A-1 → HDMI-1
     if (ports.some((x) => x.port === port)) continue;
-    const [st = "", edid = ""] = String(v).split("|");
-    const s = st.trim();
-    ports.push({ port, conn: s === "connected" ? true : s === "disconnected" ? false : null, mon: edid.trim() ? edidName(edid.trim()) : "" });
+    const parts = String(v).split("|");
+    const s = parts[0].trim(), b64 = (parts[1] ?? "").trim();
+    ports.push({
+      port, conn: s === "connected" ? true : s === "disconnected" ? false : null,
+      mon: b64 ? edidName(b64) : "", edid: parts.length > 1 ? edidLen(b64) : null,
+      pref: (parts[2] ?? "").trim(), modes: parseInt(parts[3], 10) || 0,
+    });
   }
-  let source = "KMS (/sys/class/drm)";
+  let source = "KMS (/sys/class/drm)", active = "";
   const tvs = g("TVS");
   if (!ports.length && tvs && /^state/i.test(tvs)) {
     const m = /state\s+0x([0-9a-f]+)/i.exec(tvs);
@@ -102,19 +112,52 @@ function parseHdmi(values, g) {
     const tvn = g("TVN") ?? "";
     let name = tvn.startsWith("device_name=") ? tvn.slice(12).trim() : "";
     if (name.indexOf("-") === 3) name = name.slice(4);                // "DEL-DELL P2419H": üretici kodu önde
-    ports.push({ port: "HDMI", conn, mon: conn === true ? name : "" });
+    ports.push({ port: "HDMI", conn, mon: conn === true ? name : "", edid: null, pref: "", modes: 0 });
     source = "tvservice (eski sürücü) · " + tvs;
+    const r = /(\d+)x(\d+)\s*@\s*([\d.]+)\s*Hz/.exec(tvs);            // "…], 1920x1080 @ 60.00Hz, progressive"
+    if (r) active = `${r[1]}×${r[2]} @ ${String(parseFloat(r[3]))} Hz`;
   }
   if (!ports.length) return null;
+
+  const fb = g("FB");                                                  // "U:640x480p-0|640,480"
+  if (!active && fb) { const fm = /(\d+)x(\d+)/.exec(fb) || /(\d+),(\d+)/.exec(fb); if (fm) active = `${fm[1]}×${fm[2]}`; }
+
+  const videoRaw = raw("VIDEO"), cfgRaw = raw("HCFG");
+  const video = (videoRaw ?? "").split(" ").filter(Boolean);
+  const forceVideo = video.some((t) => /^video=HDMI-A-\d+:\S*[De]$/.test(t));
+  const cfg = [...new Set((cfgRaw ?? "").split(" ").filter(Boolean))];
+  const forceCfg = cfg.some((t) => /^hdmi_force_hotplug(:\d)?=1$/.test(t));
+  const forced = forceVideo || forceCfg;
+
   const multi = ports.length > 1, on = ports.filter((x) => x.conn === true);
+  const noEdid = on.length > 0 && on.every((x) => x.edid === 0);
+  const res = active ? " · " + active : "";
   const label = (x) => (multi ? x.port + " bağlı" : "Bağlı") + (x.mon ? " · " + x.mon : "");
   let text, sev;
-  if (on.length) { text = on.map(label).join(", "); sev = "ok"; }
+  if (noEdid) { text = (forced ? "Zorlanmış bağlantı" : "Bağlı · ekran yanıt vermiyor") + res; sev = "warn"; }
+  else if (on.length) { text = on.map(label).join(", ") + res; sev = "ok"; }
   else if (ports.every((x) => x.conn === false)) { text = "Takılı değil"; sev = "warn"; }
   else { text = "Bilinmiyor"; sev = "muted"; }
-  const tip = ports.map((x) => `${x.port}: ${x.conn === true ? "bağlı" : x.conn === false ? "takılı değil" : "bilinmiyor"}${x.mon ? " · " + x.mon : ""}`).join("\n")
-    + "\nKaynak: " + source + '\nNot: hdmi_force_hotplug açıksa kablo yokken de "bağlı" görünebilir.';
-  return { text, sev, tip };
+
+  const tip = ports.map((x) => {
+    let l = `${x.port}: ${x.conn === true ? "bağlı" : x.conn === false ? "takılı değil" : "bilinmiyor"}${x.mon ? " · " + x.mon : ""}`;
+    if (x.conn === true && x.edid != null)
+      l += x.edid === 0 ? " · EDID yok (0 bayt)"
+        : ` · EDID ${x.edid} bayt` + (x.pref ? ` · önerilen ${x.pref}` : "") + (x.modes > 0 ? ` · ${x.modes} mod` : "");
+    return l;
+  });
+  if (active) tip.push("Aktif çözünürlük: " + active);
+  if (videoRaw != null)
+    tip.push(!video.length ? "Çekirdek: video= ayarı yok"
+      : "Çekirdek: " + video.join(" ") + (forceVideo ? " (bağlantıyı zorluyor)" : " (bağlantıyı zorlamaz)"));
+  if (cfgRaw != null) {
+    const others = cfg.filter((t) => !t.startsWith("hdmi_force_hotplug"));
+    tip.push("config.txt: hdmi_force_hotplug " + (forceCfg ? "açık" : "kapalı") + (others.length ? " · " + others.join(" · ") : ""));
+  }
+  tip.push("Kaynak: " + source);
+  if (noEdid && !forced) tip.push("Ekran kendini tanıtmıyor. Olası neden: arada KVM / HDMI çevirici, ekran kapalı ya da kablo arızalı.");
+  if (forced) tip.push('Not: bağlantı zorlanmış; kablo yokken de "bağlı" görünür.');
+  return { text, sev, tip: tip.join("\n") };
 }
 
 /** Cihazdan gelen "ANAHTAR=değer" satırlarından kart verisini üretir (WPF ControlDevice.ApplyStats). */
@@ -137,6 +180,33 @@ function parseCron(raw) {
     + (text === "Devre dışı · çalışıyor" ? "\nCihaz yeniden başlatılınca durur" : "")
     + "\nDeğiştirmek için: Cihaz Güncelleme → cron servisi";
   return { text, sev, tip };
+}
+
+/** "TUI=<sürüm|boş>|<swtui.service is-active>" → kart rozeti (WPF ControlDevice.ApplyTui ile aynı). Satır yoksa null. */
+function parseTui(raw) {
+  if (raw == null) return null;
+  const [v0 = "", a0 = ""] = String(raw).split("|");
+  const ver = v0.trim(), act = a0.trim();
+  const running = ["active", "activating", "reloading"].includes(act);
+  let text, sev;
+  if (!ver) [text, sev] = ["Yüklü değil", "muted"];
+  else {
+    const v = ver === "?" ? "Yüklü" : "v" + ver;
+    [text, sev] = running ? [v, "ok"] : [v + " · servis durmuş", "warn"];
+  }
+  const tip = (ver ? `swtui ${ver === "?" ? "(sürüm okunamadı)" : ver}` : "swtui kurulu değil")
+    + ` · swtui.service: ${act || DASH}` + "\nKurmak / güncellemek için: Cihaz Güncelleme → swtui";
+  return { text, sev, tip, ver: ver && ver !== "?" ? ver : "" };
+}
+
+/** Karttaki IP kopyala düğmesi: kısa süre ✓ gösterir. */
+async function copyIpBtn(ip, btn) {
+  try {
+    await copyText(ip);
+    btn.classList.add("done"); btn.innerHTML = ICONS.check;
+    setTimeout(() => { btn.classList.remove("done"); btn.innerHTML = ICONS.copy; }, 1200);
+    toast(`IP kopyalandı: ${ip}`);
+  } catch { toast("Kopyalanamadı"); }
 }
 
 function parseStats(values, d) {
@@ -183,6 +253,7 @@ function parseStats(values, d) {
   s.swText = { active: "Çalışıyor", inactive: "Durdurulmuş", failed: "Hata", activating: "Başlıyor" }[sw] ?? sw;
   s.swSev = { active: "ok", activating: "info", failed: "error" }[sw] ?? "warn";
   s.cron = parseCron(g("CRON"));
+  s.tui = parseTui(g("TUI"));
   s.host = g("HOST") ?? "";
 
   // Ağ
@@ -539,7 +610,7 @@ export function createControl(ctx) {
       </div>
       <div class="ipline">${d.bedOnly
         ? `<span>Yatak ID <span class="mono">${esc(d.yatakId)}</span></span>`
-        : `<span title="${esc(s?.host ?? "")}"><span class="mono">${esc(d.ip)}</span> ${esc(s?.viaText ?? "")}</span>${badge(d.status.text, d.status.sev)}`}</div>
+        : `<span title="${esc(s?.host ?? "")}"><span class="mono">${esc(d.ip)}</span><button class="copy-ip ccopy" data-act="copyip" data-id="${d.id}" title="IP adresini kopyala">${ICONS.copy}</button>${esc(s?.viaText ?? "")}</span>${badge(d.status.text, d.status.sev)}`}</div>
       <div class="cbody">
       <div class="pbody${pat ? "" : " hid"}">${patientHtml(d)}</div>`;
     if (d.bedOnly) return h + `</div>${footHtml(d, disabled)}</div>`;
@@ -561,7 +632,14 @@ export function createControl(ctx) {
         <span class="muted">Yük <span style="color:var(--text)">${esc(s?.load ?? DASH)}</span></span></div>`;
 
     if (s?.hdmi) h += `<div class="hdmirow" title="${esc(s.hdmi.tip)}"><span class="tk">HDMI</span>${badge(s.hdmi.text, s.hdmi.sev)}</div>`;
-    if (s?.cron) h += `<div class="hdmirow" title="${esc(s.cron.tip)}"><span class="tk">CRON</span>${badge(s.cron.text, s.cron.sev)}</div>`;
+    // CRON ve SWTUI yan yana, durum simgeyle: ✓ etkin / yüklü · ✕ devre dışı / yüklü değil · ⚠ durmuş (ayrıntı ipucunda)
+    if (s?.cron || s?.tui) {
+      const glyph = (sev) => `<i class="sglyph ${sev === "ok" ? "ok" : sev === "warn" ? "warn" : "off"}">${sev === "ok" ? ICONS.check : sev === "warn" ? ICONS.warn : ICONS.xmark}</i>`;
+      h += `<div class="svcrow">`
+        + (s.cron ? `<span title="${esc(s.cron.tip)}"><span class="tk">CRON</span>${glyph(s.cron.sev)}</span>` : "")
+        + (s.tui ? `<span title="${esc(s.tui.tip)}"><span class="tk">SWTUI</span>${glyph(s.tui.sev)}${s.tui.ver ? `<span class="mono txt-muted sver">${esc(s.tui.ver)}</span>` : ""}</span>` : "")
+        + `</div>`;
+    }
     if (s) {
       h += `<div class="tk" style="margin-top:14px">USB</div>` +
         (s.usb.length === 0 ? `<div class="sm muted" style="margin-top:6px">Takılı USB seri aygıt yok</div>` :
@@ -857,6 +935,7 @@ export function createControl(ctx) {
     if (g) { const rm = rooms[+g.dataset.room]; rm.collapsed = !rm.collapsed; render(); return; }
     const b = e.target.closest("[data-act]"); if (!b) return;
     const d = dev(+b.dataset.id); if (!d) return;
+    if (b.dataset.act === "copyip") { copyIpBtn(d.ip, b); return; }
     if (b.dataset.act === "update") { ctx.openInUpdate?.(d.ip); return; }
     // Hasta tarafı SSH işlemlerinden bağımsız: cihazlar okunurken de kullanılabilir
     if (b.dataset.act === "view") {

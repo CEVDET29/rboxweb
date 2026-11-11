@@ -1,7 +1,9 @@
 # dist\updateFiles klasöründen dist\updateFiles.zip üretir (klasörün kendisine dokunmaz).
 # Bu zip GitHub'da "updatefiles" etiketli ön sürüme (pre-release) elle yüklenir; ajan klasör boşsa oradan indirir:
 #   https://github.com/<kullanici>/<depo>/releases/download/updatefiles/updateFiles.zip
-# Pakete girmeyenler: "Güncelleme Raporu.txt" (günlük) ve *.unix (eski sürümlerin geçici kopyaları).
+# Pakete girmeyenler: "Güncelleme Raporu.txt" (günlük), *.unix (eski sürümlerin geçici kopyaları) ve
+# rasyobox-kurulum-*.tar.gz (DLL'li hastane paketi: içindeki DLL'de SQL şifresi var; GitHub sürümleri herkese açık).
+# swtui için kullanılan swtui-*.tar.gz şifre içermez ve pakete girer.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $root = Split-Path $PSScriptRoot -Parent
@@ -12,7 +14,8 @@ if (Test-Path $zip) { Remove-Item -LiteralPath $zip -Force }
 
 $base = (Resolve-Path $src).Path.TrimEnd('\') + '\'
 $files = Get-ChildItem -LiteralPath $src -Recurse -File |
-    Where-Object { $_.Name -ne ('G' + [char]0x00FC + 'ncelleme Raporu.txt') -and $_.Extension -ne '.unix' }
+    Where-Object { $_.Name -ne ('G' + [char]0x00FC + 'ncelleme Raporu.txt') -and $_.Extension -ne '.unix' -and
+                   $_.Name -notlike 'rasyobox-kurulum-*.tar.gz' }
 
 $fs = [IO.File]::Open($zip, [IO.FileMode]::CreateNew)
 $archive = New-Object IO.Compression.ZipArchive($fs, [IO.Compression.ZipArchiveMode]::Create)

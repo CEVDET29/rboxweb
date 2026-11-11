@@ -95,6 +95,35 @@ namespace RboxAgent.Modules.Update.Services
             }, ct);
         }        // SshUpdater.cs — class SshUpdater içine EKLE
 
+        /// <summary>
+        /// Komutu SSH kullanıcısı olarak (root değil) çalıştırır; komutun ve çağırdığı betiklerin içindeki
+        /// <c>sudo</c> çağrıları bu oturumun şifresini SUDO_ASKPASS ile alır. Şifre RAM'deki (/dev/shm) geçici
+        /// klasörde durur, komut bitince silinir. stdin'e dokunulmaz (<c>sudo tee &lt;&lt;EOF</c> çalışır).
+        /// $HOME'a ve kullanıcı adına kurulum yapan betikler içindir (ör. swtui kur.sh): root olarak çalışırsa
+        /// /root altına kurulur. Cihazda sudo şifresizse askpass hiç çağrılmaz.
+        /// </summary>
+        public Task<(int exitCode, string stdout, string stderr)> ExecuteAsUserWithSudoAsync(
+            SshClient client, string raw, string? ip, CancellationToken ct, int timeoutSeconds)
+        {
+            return Task.Run<(int exitCode, string stdout, string stderr)>(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+                string shim = $$"""
+                    D=$(mktemp -d /dev/shm/rbx.XXXXXX 2>/dev/null || mktemp -d) || exit 97
+                    chmod 700 "$D"; trap 'rm -rf "$D"' EXIT
+                    printf '%s\n' '{{EscapeSingleQuotes(_pass)}}' > "$D/p"; chmod 600 "$D/p"
+                    printf '#!/bin/sh\ncat "%s/p"\n' "$D" > "$D/askpass"
+                    printf '#!/bin/sh\nSUDO_ASKPASS="%s/askpass" exec /usr/bin/sudo -A "$@"\n' "$D" > "$D/sudo"
+                    chmod 700 "$D/askpass" "$D/sudo"; export PATH="$D:$PATH"
+
+                    """;
+                using var cmd = client.CreateCommand(shim + raw);
+                cmd.CommandTimeout = TimeSpan.FromSeconds(timeoutSeconds);
+                Run(cmd, raw);
+                return (cmd.ExitStatus ?? -1, cmd.Result ?? string.Empty, cmd.Error ?? string.Empty);
+            }, ct);
+        }
+
         private (bool ok, string stdout, string stderr) RunSudoOnce(
             SshClient client, string cmd, TimeSpan timeout, bool noPromptFirst)
         {

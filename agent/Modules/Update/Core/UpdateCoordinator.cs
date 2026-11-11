@@ -67,6 +67,9 @@ namespace RboxAgent.Modules.Update.Core
         // RasyoBOX web arayüzü kurulumu — rasyobox-v9.tar.gz (v4.5)
         public bool WebServer { get; set; }
 
+        // yalnız swtui ekranı — swtui-*.tar.gz içindeki swtui-kur.sh (v5.2); SerialWorker DLL'ine dokunmaz
+        public bool Swtui { get; set; }
+
         // serialdevices.json → /var/www/consoleApps/publish/ (v4.7)
         public bool SerialDevices { get; set; }
 
@@ -1405,6 +1408,87 @@ namespace RboxAgent.Modules.Update.Core
     }
 
     /// <summary>
+    /// v5.2 — swtui ekranı kurulumu (ClaudeProjects\swtui\deploy\swtui-paketi-olustur ile üretilen paket).
+    /// updateFiles altındaki en yüksek sürümlü <c>swtui-*.tar.gz</c> cihazın /tmp klasörüne yüklenir, açılır ve
+    /// paketin <c>swtui-kur.sh</c> betiği çalıştırılır: Python kontrolü, ~/rasyobox-tui, /usr/local/bin/swtui ve
+    /// açılışta başlatma. swtui SerialWorker'dan bağımsızdır: DLL'e, serialworker.service'e ve SQL ayarlarına
+    /// dokunulmaz (DLL'li hastane paketi rasyobox-kurulum-*.tar.gz bu adımda kullanılmaz).
+    /// <para>swtui-kur.sh $HOME'a kurar ve içinde sudo çağırır; bu yüzden root olarak değil SSH kullanıcısı olarak,
+    /// sudo şifresi SUDO_ASKPASS ile verilerek çalıştırılır (<see cref="SshUpdater.ExecuteAsUserWithSudoAsync"/>).</para>
+    /// <para>İş bitince arşiv ve açılan klasör cihazdan silinir. Sunucu IP ve Yatak ID cihazda swtui ekranında
+    /// (A tuşu) girilir. Hata durumunda zincir kırılmaz.</para>
+    /// </summary>
+    internal sealed class SwtuiStep : IUpdateStep
+    {
+        internal const string PackagePrefix = "swtui-";
+        private const string PackagePattern = PackagePrefix + "*.tar.gz";
+        /// <summary>DLL'li (SQL şifreli) hastane paketi; hiçbir adım bunu kurmaz, web server adımı da yanlışlıkla almaz.</summary>
+        internal const string HospitalPackagePrefix = "rasyobox-kurulum-";
+        // compileall + otomatik başlatma Pi'de bir-iki dakika sürebilir.
+        private const int InstallTimeoutSeconds = 600;
+
+        public bool ShouldRun(UpdateOptions o) => o.Swtui;
+
+        public async Task<bool> RunAsync(StepContext x)
+        {
+            string? rel = WebServerStep.FindNewestArchive(x, PackagePattern);
+            if (rel == null)
+            {
+                await x.Logger.LogAsync(x.Ip,
+                    $"{PackagePattern} kalıbına uyan paket updateFiles klasöründe bulunamadı — swtui adımı atlandı.",
+                    StatusKind.Error);
+                return true; // zincir kırılmaz
+            }
+
+            string name = Path.GetFileName(rel);
+            string remote = "/tmp/" + name;
+            await x.Logger.LogAsync(x.Ip, $"swtui paketi: {name}");
+
+            // SFTP ile SSH kullanıcısı adına /tmp'ye yüklenir (sahibi kullanıcı; swtui-kur.sh onu okuyabilsin)
+            bool copied = await x.Updater.CopyFileWithSudoAsync(
+                x.Client, rel, remote, $"chmod 0644 '{remote}'", x.Ip, x.Ct, unixifyBeforeUpload: false);
+            if (!copied)
+            {
+                await x.Logger.LogAsync(x.Ip, $"{name} cihaza kopyalanamadı — swtui kurulmadı.", StatusKind.Error);
+                return true;
+            }
+
+            // Aç, swtui-kur.sh'i çalıştır; sonuç ne olursa olsun paketi ve açılan klasörü sil.
+            //   </dev/null : betik soru sorarsa beklemesin.   2>&1 : tüm çıktı tek kanalda, sırası korunur.
+            string install =
+                "W=$(mktemp -d /tmp/rbx-swtui.XXXXXX) || exit 98\n" +
+                $"( tar --warning=no-timestamp -xzmf '{remote}' -C \"$W\" || {{ echo 'HATA: paket açılamadı'; exit 2; }}; " +
+                "[ -f \"$W/swtui-kurulum/swtui-kur.sh\" ] || { echo 'HATA: pakette swtui-kurulum/swtui-kur.sh yok'; exit 2; }; " +
+                "sh \"$W/swtui-kurulum/swtui-kur.sh\" </dev/null ) 2>&1\n" +
+                "rc=$?\n" +
+                $"rm -rf \"$W\" '{remote}'\n" +
+                "exit $rc\n";
+
+            var (rc, stdout, stderr) = await x.Updater.ExecuteAsUserWithSudoAsync(
+                x.Client, install, x.Ip, x.Ct, InstallTimeoutSeconds);
+            string output = WebServerStep.StripAnsi(((stdout ?? "") + "\n" + (stderr ?? "")).Trim());
+
+            string? Line(string prefix) => output.Replace("\r\n", "\n").Split('\n')
+                .Select(l => l.Trim()).LastOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal));
+
+            if (rc == 0 && output.Contains("KURULUM BİTTİ", StringComparison.Ordinal))
+            {
+                await x.Logger.LogAsync(x.Ip,
+                    $"swtui kuruldu ({name}). Sunucu IP ve Yatak ID'yi cihazda swtui ekranında A tuşuyla girin.",
+                    StatusKind.Success);
+                return true;
+            }
+
+            string detail = Line("HATA:") ?? WebServerStep.Tail(output, 6);
+            string msg = rc is 97 or 98
+                ? "swtui kurulmadı: cihazda geçici klasör açılamadı (disk dolu ya da salt okunur olabilir)."
+                : $"swtui kurulamadı (çıkış kodu {rc}). {detail}";
+            await x.Logger.LogAsync(x.Ip, msg, StatusKind.Error);
+            return true; // hata olsa da zincir devam eder
+        }
+    }
+
+    /// <summary>
     /// v4.5 — RasyoBOX web arayüzü kurulumu.
     /// updateFiles altındaki <c>rasyobox-*.tar.gz</c> arşivi cihazın /home/pi klasörüne
     /// yüklenir, açılır, <c>sudo bash install.sh</c> çalıştırılır; işlem bitince
@@ -1619,21 +1703,28 @@ namespace RboxAgent.Modules.Update.Core
         private static readonly Regex SafeArchiveName = new(@"^[A-Za-z0-9._+-]+$", RegexOptions.Compiled);
         private static readonly Regex NumberGroups = new(@"\d+", RegexOptions.Compiled);
 
-        private static string? FindNewestArchive(StepContext x)
+        /// <summary>
+        /// <paramref name="pattern"/> kalıbına uyan en yüksek sürümlü arşiv. Varsayılan kalıp (web arayüzü,
+        /// <c>rasyobox-*.tar.gz</c>) swtui kurulum paketini (<c>rasyobox-kurulum-*.tar.gz</c>) de yakaladığı için
+        /// onu dışarıda bırakır; yoksa web server adımı yanlış arşivi kurabilirdi (v5.2).
+        /// </summary>
+        internal static string? FindNewestArchive(StepContext x, string pattern = ArchivePattern)
         {
             try
             {
                 var found = new List<string>();   // WorkFolder'a göre göreli yollar
+                bool skipSwtuiPackage = pattern == ArchivePattern;
 
                 foreach (string sub in new[] { "", "Resources" })
                 {
                     string dir = sub.Length == 0 ? x.WorkFolder : Path.Combine(x.WorkFolder, sub);
                     if (!Directory.Exists(dir)) continue;
 
-                    foreach (string full in Directory.EnumerateFiles(dir, ArchivePattern, SearchOption.TopDirectoryOnly))
+                    foreach (string full in Directory.EnumerateFiles(dir, pattern, SearchOption.TopDirectoryOnly))
                     {
                         string name = Path.GetFileName(full);
                         if (!SafeArchiveName.IsMatch(name)) continue;   // boşluk/tırnak içeren adı atla
+                        if (skipSwtuiPackage && name.StartsWith(SwtuiStep.HospitalPackagePrefix, StringComparison.OrdinalIgnoreCase)) continue;
                         found.Add(sub.Length == 0 ? name : Path.Combine(sub, name));
                     }
                 }
@@ -1687,11 +1778,11 @@ namespace RboxAgent.Modules.Update.Core
         }
 
         /// <summary>install.sh renkli çıktı basıyor; ANSI kaçış dizilerini temizler.</summary>
-        private static string StripAnsi(string s)
+        internal static string StripAnsi(string s)
             => string.IsNullOrEmpty(s) ? "" : Regex.Replace(s, @"\x1B\[[0-9;]*[A-Za-z]", "");
 
         /// <summary>install.sh hata satırlarını "✗" işaretinden yakalar (en fazla 4 tane).</summary>
-        private static string Errors(string s)
+        internal static string Errors(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return "";
             var hits = s.Replace("\r\n", "\n").Split('\n')
@@ -1703,7 +1794,7 @@ namespace RboxAgent.Modules.Update.Core
         }
 
         /// <summary>Log satırı şişmesin diye çıktının son N dolu satırı.</summary>
-        private static string Tail(string s, int lines)
+        internal static string Tail(string s, int lines)
         {
             if (string.IsNullOrWhiteSpace(s)) return "(çıktı yok)";
             var parts = s.Replace("\r\n", "\n").Split('\n')
@@ -1772,6 +1863,7 @@ namespace RboxAgent.Modules.Update.Core
             new ConspyStep(),
             new DllStep(),
             new WebServerStep(),         // v4.5: RasyoBOX web arayüzü (rasyobox-v9.tar.gz)
+            new SwtuiStep(),             // v5.2: yalnız swtui (swtui-*.tar.gz → swtui-kur.sh; DLL'e dokunmaz)
             new ExpandFsRebootStep(),
         };
 

@@ -53,6 +53,9 @@ namespace RboxAgent.Modules.Control
             "echo \"SW=$(systemctl is-active serialworker.service 2>/dev/null)\"; " +
             // cron.service: açılışta etkin mi | şu an çalışıyor mu (salt okunur; Cihaz Güncelleme enable/disable eder)
             "echo \"CRON=$(systemctl is-enabled cron.service 2>&1 | head -n1)|$(systemctl is-active cron.service 2>/dev/null)\"; " +
+            // swtui: kur.sh /usr/local/bin/swtui → ~/rasyobox-tui/swtui bağı kurar; sürüm rasyobox_tui.py'den (boş = kurulu değil)
+            "p=$(readlink -f /usr/local/bin/swtui 2>/dev/null); tv=; if [ -f \"$p\" ]; then tv=$(grep -m1 '^__version__' \"${p%/*}/rasyobox_tui.py\" 2>/dev/null | tr -dc '0-9.'); tv=${tv:-?}; fi; " +
+            "echo \"TUI=$tv|$(systemctl is-active swtui.service 2>/dev/null)\"; " +
             "echo \"HOST=$(hostname)\"; " +
             "echo \"CARD=$(lsblk -bdno SIZE /dev/mmcblk0 2>/dev/null)\"; " +
             // USB seri portlar (ttyUSB0/ttyUSB1…, ttyACM0…): sysfs'te USB aygıtına çıkılıp VID:PID, üretici, ürün ve
@@ -63,9 +66,14 @@ namespace RboxAgent.Modules.Control
             "[ -f \"$d/idVendor\" ] && echo \"USB_$n=$(cat $d/idVendor):$(cat $d/idProduct)|$(cat $d/manufacturer 2>/dev/null)|$(cat $d/product 2>/dev/null)|${d##*/}\"; " +
             "done; " +
             // HDMI: KMS sürücüsünde (Bookworm, vc4-kms-v3d) her bağlantı noktasının durumu ve monitörün EDID'i sysfs'te.
-            // Satır: HDMI_card1-HDMI-A-1=connected|<EDID base64>. Eski firmware sürücüsünde tvservice (-s durum, -n monitör adı).
+            // Satır: HDMI_card1-HDMI-A-1=connected|<EDID base64>|<ilk mod (önerilen)>|<mod sayısı>.
+            // Eski firmware sürücüsünde tvservice (-s durum + çözünürlük, -n monitör adı).
             "for s in /sys/class/drm/card*-HDMI-A-*; do [ -e \"$s/status\" ] || continue; " +
-            "echo \"HDMI_${s##*/}=$(cat \"$s/status\" 2>/dev/null)|$(base64 -w0 \"$s/edid\" 2>/dev/null)\"; done; " +
+            "echo \"HDMI_${s##*/}=$(cat \"$s/status\" 2>/dev/null)|$(base64 -w0 \"$s/edid\" 2>/dev/null)|$(head -n1 \"$s/modes\" 2>/dev/null)|$(wc -l < \"$s/modes\" 2>/dev/null)\"; done; " +
+            // Aktif çözünürlük (görüntü belleği), çekirdek satırındaki video= ve config.txt'deki etkin hdmi_* ayarları
+            "echo \"FB=$(head -n1 /sys/class/graphics/fb0/modes 2>/dev/null)|$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null)\"; " +
+            "echo \"VIDEO=$(grep -o 'video=[^ ]*' /proc/cmdline 2>/dev/null | tr '\\n' ' ')\"; " +
+            "echo \"HCFG=$(grep -hE '^[[:space:]]*hdmi_[a-z_]+(:[0-9])?[[:space:]]*=' /boot/config.txt /boot/firmware/config.txt 2>/dev/null | tr -d ' \\t\\r' | tr '\\n' ' ')\"; " +
             "TV=$(command -v tvservice || ls /opt/vc/bin/tvservice 2>/dev/null); " +
             "if [ -n \"$TV\" ]; then echo \"TVS=$($TV -s 2>&1 | head -n1)\"; echo \"TVN=$($TV -n 2>&1 | head -n1)\"; fi; " +
             "for i in wlan0 eth0; do " +
