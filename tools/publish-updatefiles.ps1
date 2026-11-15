@@ -3,7 +3,7 @@
 #   https://github.com/<kullanici>/<depo>/releases/download/updatefiles/updateFiles.zip
 # Pakete girmeyenler: "Güncelleme Raporu.txt" (günlük), *.unix (eski sürümlerin geçici kopyaları) ve
 # rasyobox-kurulum-*.tar.gz (DLL'li hastane paketi: içindeki DLL'de SQL şifresi var; GitHub sürümleri herkese açık).
-# swtui için kullanılan swtui-*.tar.gz şifre içermez ve pakete girer.
+# swtui için kullanılan swtui-*.tar.gz şifre içermez ve pakete girer; swtui adımının çevrimdışı kurduğu tmux\*.deb de girer.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $root = Split-Path $PSScriptRoot -Parent

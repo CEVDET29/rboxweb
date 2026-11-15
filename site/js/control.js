@@ -3,6 +3,7 @@
 // WPF ControlView / ControlDevice / ControlPatient / ControlViewModel karşılığı. SSH ve SQL okuması ajandadır; biçimlendirme burada.
 import { api, stream } from "./api.js";
 import { $, $$, esc, toast, unitColor, ipFilter, ICONS, storeGet, storeSet, copyText } from "./util.js";
+import { openTty } from "./tty.js";
 
 const DASH = "—";
 
@@ -157,46 +158,122 @@ function parseHdmi(values, g) {
   tip.push("Kaynak: " + source);
   if (noEdid && !forced) tip.push("Ekran kendini tanıtmıyor. Olası neden: arada KVM / HDMI çevirici, ekran kapalı ya da kablo arızalı.");
   if (forced) tip.push('Not: bağlantı zorlanmış; kablo yokken de "bağlı" görünür.');
-  return { text, sev, tip: tip.join("\n") };
+  const [state, sub] = noEdid ? ["warn", "ekran?"] : on.length ? ["ok", "bağlı"] : sev === "warn" ? ["warn", "yok"] : ["unknown", "?"];
+  return { text, sev, tip: tip.join("\n"), state, sub };
 }
 
-/** Cihazdan gelen "ANAHTAR=değer" satırlarından kart verisini üretir (WPF ControlDevice.ApplyStats). */
+// ── Durum kareleri (WPF ControlDevice: TileState + Sub + ipucu) ──
+// state: ok yeşil · off gri · missing soluk bordo (kurulu değil) · warn sarı · error kırmızı · unknown
+const ENABLED = ["enabled", "enabled-runtime", "static", "indirect", "generated", "alias"];
+const isEn = (en) => ENABLED.includes(en);
+const isRun = (act) => ["active", "activating", "reloading"].includes(act);
+const noUnit = (en) => /not-found|No such file/.test(en);
+/** İpucunun son satırı: kareye tıklanınca ne olacağı. */
+const hint = (turnsOff) => (turnsOff ? "\n▸ Tıkla: kapat (açılışta da kapalı kalır)" : "\n▸ Tıkla: aç (açılışta da otomatik başlar)");
+const fields = (raw) => String(raw).split("|").map((x) => x.trim());
+
 /**
- * "CRON=<is-enabled>|<is-active>" → kart rozeti (WPF ControlDevice.ApplyCron ile aynı). Salt okunur:
- * Cihaz Güncelleme'deki cron seçeneği bu servisi enable/disable eder. Satır yoksa (eski ajan) null.
+ * "SW=<is-active>|<is-enabled>" (WPF ApplyStats). Açılış ayarı okunduysa: etkin + çalışıyor yeşil · etkin + durmuş sarı ·
+ * kapalı + çalışıyor sarı (geçici) · kapalı gri. is-enabled "not-found" ise kurulu değil. Sürüm ipucuna çizimde eklenir.
  */
+function parseSw(raw) {
+  const [sw = "bilinmiyor", en = ""] = fields(raw ?? "bilinmiyor");
+  const missing = noUnit(en), known = !!en && !missing, boot = isEn(en);
+  const text = missing ? "Kurulu değil" : { active: "Çalışıyor", inactive: "Durdurulmuş", failed: "Hata", activating: "Başlıyor" }[sw] ?? sw;
+  const sev = missing ? "muted" : { active: "ok", activating: "info", failed: "error" }[sw] ?? "warn";
+  const state = missing ? "missing" : sw === "active" ? (!known || boot ? "ok" : "warn")
+    : ["activating", "reloading"].includes(sw) ? "warn" : sw === "failed" ? "error" : known && boot ? "warn" : "off";
+  return {
+    text, sev, state, missing, off: sw === "active" && (!known || boot), can: !missing && !["", "bilinmiyor"].includes(sw),
+    tip0: `SerialWorker: ${text}\nserialworker.service · şu an: ${sw || DASH} · açılışta: ${en || DASH}`
+      + (sw === "active" && known && !boot ? "\nAçılışta kapalı: cihaz yeniden başlatılınca durur" : ""),
+  };
+}
+
+/** "WEB=<is-enabled>|<is-active>|<open|closed|?>" → rasyobox-web.service + port 80 (WPF ApplyWeb). Satır yoksa null. */
+function parseWeb(raw) {
+  if (raw == null) return null;
+  const [en = "", act = "", port = "?"] = fields(raw);
+  const running = isRun(act), missing = !en || noUnit(en), boot = isEn(en);
+  const text = missing ? "Yüklü değil"
+    : running ? (port === "closed" ? "Çalışıyor · port 80 kapalı" : !boot ? "Çalışıyor · geçici (açılışta kapalı)" : "Çalışıyor")
+    : en === "disabled" ? "Devre dışı" : en.startsWith("masked") ? "Maskeli" : act === "failed" ? "Hata" : "Durmuş";
+  const [state, sub] = missing ? ["missing", "yok"]
+    : running ? (port === "closed" ? ["warn", "kapalı"] : !boot ? ["warn", "geçici"] : ["ok", port === "open" ? ":80" : "açık"])
+    : act === "failed" ? ["error", "hata"]
+    : [boot ? "warn" : "off", en === "disabled" ? "kapalı" : en.startsWith("masked") ? "maskeli" : "durdu"];
+  const off = running && boot;                 // açık ve kalıcıysa kapatılır; diğer her durumda açılır
+  return {
+    state, sub, off, can: !missing,
+    tip: missing ? "RasyoBOX web arayüzü kurulu değil (rasyobox-web.service yok)"
+      : `RasyoBOX web arayüzü: ${text}\nrasyobox-web.service · açılışta: ${en} · şu an: ${act || DASH}\nPort 80: ${{ open: "dinleniyor", closed: "kapalı" }[port] ?? "okunamadı"}` + hint(off),
+  };
+}
+
+/** "CRON=<is-enabled>|<is-active>" (WPF ApplyCron). Kareye tıklanınca servis kalıcı olarak açılır / kapatılır. Satır yoksa null. */
 function parseCron(raw) {
   if (raw == null) return null;
-  const [en0 = "", act0 = ""] = String(raw).split("|");
-  const en = en0.trim(), act = act0.trim();
-  const running = ["active", "activating", "reloading"].includes(act);
-  let text, sev;
-  if (["enabled", "enabled-runtime", "static", "indirect", "generated", "alias"].includes(en)) [text, sev] = running ? ["Etkin", "ok"] : ["Etkin · durmuş", "warn"];
-  else if (en === "disabled") [text, sev] = running ? ["Devre dışı · çalışıyor", "warn"] : ["Devre dışı", "muted"];
-  else if (en === "masked" || en === "masked-runtime") [text, sev] = ["Maskeli", "muted"];
-  else if (!en || en.includes("not-found") || en.includes("No such file")) [text, sev] = ["Kurulu değil", "muted"];
-  else [text, sev] = [en, "muted"];
-  const tip = `cron.service · açılışta: ${en || DASH} · şu an: ${act || DASH}`
-    + (text === "Devre dışı · çalışıyor" ? "\nCihaz yeniden başlatılınca durur" : "")
-    + "\nDeğiştirmek için: Cihaz Güncelleme → cron servisi";
-  return { text, sev, tip };
+  const [en = "", act = ""] = fields(raw);
+  const running = isRun(act);
+  const text = isEn(en) ? (running ? "Etkin" : "Etkin · durmuş")
+    : en === "disabled" ? (running ? "Devre dışı · çalışıyor" : "Devre dışı")
+    : en === "masked" || en === "masked-runtime" ? "Maskeli"
+    : !en || noUnit(en) ? "Kurulu değil" : en;
+  const [state, sub] = {
+    "Etkin": ["ok", "açık"], "Etkin · durmuş": ["warn", "durdu"], "Devre dışı · çalışıyor": ["warn", "geçici"],
+    "Devre dışı": ["off", "kapalı"], "Maskeli": ["off", "maskeli"], "Kurulu değil": ["missing", "yok"],
+  }[text] ?? ["unknown", "?"];
+  const can = ["ok", "off", "warn"].includes(state);
+  return {
+    state, sub, off: state === "ok", can,
+    tip: `Cron: ${text}\ncron.service · açılışta: ${en || DASH} · şu an: ${act || DASH}`
+      + (text === "Devre dışı · çalışıyor" ? "\nCihaz yeniden başlatılınca durur" : "") + (can ? hint(state === "ok") : ""),
+  };
 }
 
-/** "TUI=<sürüm|boş>|<swtui.service is-active>" → kart rozeti (WPF ControlDevice.ApplyTui ile aynı). Satır yoksa null. */
+/** "TUI=<sürüm|boş>|<is-active>|<is-enabled>" (WPF ApplyTui). Üçüncü alan yoksa yalnız çalışma durumuna bakılır. Satır yoksa null. */
 function parseTui(raw) {
   if (raw == null) return null;
-  const [v0 = "", a0 = ""] = String(raw).split("|");
-  const ver = v0.trim(), act = a0.trim();
-  const running = ["active", "activating", "reloading"].includes(act);
-  let text, sev;
-  if (!ver) [text, sev] = ["Yüklü değil", "muted"];
-  else {
-    const v = ver === "?" ? "Yüklü" : "v" + ver;
-    [text, sev] = running ? [v, "ok"] : [v + " · servis durmuş", "warn"];
-  }
-  const tip = (ver ? `swtui ${ver === "?" ? "(sürüm okunamadı)" : ver}` : "swtui kurulu değil")
-    + ` · swtui.service: ${act || DASH}` + "\nKurmak / güncellemek için: Cihaz Güncelleme → swtui";
-  return { text, sev, tip, ver: ver && ver !== "?" ? ver : "" };
+  const [ver = "", act = "", en = ""] = fields(raw);
+  const running = isRun(act), known = en.length > 0;
+  const unitMissing = known && (noUnit(en) || en.includes("Failed"));
+  const enabled = isEn(en), masked = en.startsWith("masked");
+  const [state, word] = !ver ? ["missing", "yok"] : unitMissing ? ["off", "servis yok"]
+    : !known ? (running ? ["ok", "açık"] : ["off", "durdu"])
+    : enabled ? (running ? ["ok", "açık"] : ["warn", "durdu"])
+    : running ? ["warn", "geçici"] : ["off", masked ? "maskeli" : "kapalı"];
+  const can = !!ver && !unitMissing;
+  return {
+    state, sub: !ver ? "yok" : ver !== "?" ? ver : word, off: state === "ok", can,
+    tip: (ver ? `swtui ${ver === "?" ? "(sürüm okunamadı)" : ver}` : "swtui kurulu değil")
+      + `\nswtui.service · açılışta: ${known ? en : DASH} · şu an: ${act || DASH}`
+      + (known && !enabled && running ? "\nCihaz yeniden başlatılınca durur" : "")
+      + (can ? hint(state === "ok") : "") + (!ver ? "\nKurmak için: Cihaz Güncelleme → swtui" : ""),
+  };
+}
+
+/**
+ * "LOGIN=<yes|no: raspi-config var mı>|<console|desktop>|<otomatik giren kullanıcı, boş = kapalı>" (WPF ApplyLogin).
+ * Tıklanınca raspi-config nonint do_boot_behaviour B1/B2 (konsol) ya da B3/B4 (masaüstü); yeniden başlatınca geçerli.
+ */
+function parseLogin(raw) {
+  if (raw == null) return null;
+  const [rc = "", mode = "", user = ""] = fields(raw);
+  const can = rc === "yes", desktop = mode === "desktop", on = user.length > 0;
+  return {
+    state: on ? "ok" : "off", sub: on ? "açık" : "kapalı", off: on, can, desktop,
+    tip: `Otomatik giriş: ${on ? `açık · kullanıcı ${user === "?" ? "(okunamadı)" : user}` : "kapalı"}`
+      + `\nAçılış: ${desktop ? "masaüstü (lightdm)" : "konsol (tty1)"}`
+      + (can ? (on ? "\n▸ Tıkla: kapat (yeniden başlatınca geçerli)" : "\n▸ Tıkla: aç (yeniden başlatınca geçerli)")
+        : "\nraspi-config bulunamadı: buradan değiştirilemez"),
+  };
+}
+
+/** Bellek / disk doluluğu: %90 ve üstü sarı, %95 ve üstü kırmızı + ⚠ (WPF Fill / PercentText). Okunmadıysa boş. */
+function fill(u) {
+  if (u.text === DASH) return { ...u, sev: "none", pctText: "" };
+  const sev = u.pct >= 95 ? "error" : u.pct >= 90 ? "warn" : "ok";
+  return { ...u, sev, pctText: `%${u.pct}` + (sev === "error" ? " ⚠" : "") };
 }
 
 /** Karttaki IP kopyala düğmesi: kısa süre ✓ gösterir. */
@@ -209,6 +286,7 @@ async function copyIpBtn(ip, btn) {
   } catch { toast("Kopyalanamadı"); }
 }
 
+/** Cihazdan gelen "ANAHTAR=değer" satırlarından kart verisini üretir (WPF ControlDevice.ApplyStats). */
 function parseStats(values, d) {
   const V = Object.fromEntries(Object.entries(values).map(([k, x]) => [k.toLowerCase(), x]));
   const g = (k) => (V[k.toLowerCase()] ? V[k.toLowerCase()] : null);
@@ -223,8 +301,8 @@ function parseStats(values, d) {
   const up = parseInt(g("UP"), 10);
   s.uptime = Number.isFinite(up) ? fmtUptime(up) : DASH;
   s.load = g("LOAD") ?? DASH;
-  s.mem = usedTotal(g("MEM"));
-  s.disk = usedTotal(g("DISK"));
+  s.mem = fill(usedTotal(g("MEM")));
+  s.disk = fill(usedTotal(g("DISK")));
 
   // İşlemci: CPU = "t1 i1 t2 i2" (/proc/stat toplam ve boşta+iowait, 0,5 sn arayla) → kullanım = 1 − Δboşta / Δtoplam
   const cp = String(g("CPU") ?? "").trim().split(/\s+/).map(Number);
@@ -249,11 +327,10 @@ function parseStats(values, d) {
       : "Depolama zaten SD kartın tamamını kullanıyor";
   }
 
-  const sw = g("SW") ?? "bilinmiyor";
-  s.swText = { active: "Çalışıyor", inactive: "Durdurulmuş", failed: "Hata", activating: "Başlıyor" }[sw] ?? sw;
-  s.swSev = { active: "ok", activating: "info", failed: "error" }[sw] ?? "warn";
-  s.cron = parseCron(g("CRON"));
-  s.tui = parseTui(g("TUI"));
+  const sw = parseSw(g("SW"));
+  s.swText = sw.text; s.swSev = sw.sev;
+  s.t = { sw, web: parseWeb(g("WEB")), tui: parseTui(g("TUI")), cron: parseCron(g("CRON")), login: parseLogin(g("LOGIN")) };
+  if (s.hdmi) s.t.hdmi = { state: s.hdmi.state, sub: s.hdmi.sub, tip: `HDMI: ${s.hdmi.text}\n${s.hdmi.tip}` };
   s.host = g("HOST") ?? "";
 
   // Ağ
@@ -294,6 +371,11 @@ function parseStats(values, d) {
     .filter(([k]) => /^usb_/i.test(k))
     .sort((a, b) => a[0].length - b[0].length || a[0].localeCompare(b[0]))
     .map(([k, v]) => usbPort(k, v));
+  s.t.usb = {
+    state: s.usb.length ? "ok" : "off", sub: s.usb.length ? String(s.usb.length) : "yok",
+    tip: s.usb.length ? "USB seri aygıtlar\n" + s.usb.map((u) => `${u.name} · ${u.vendor}${u.product ? " · " + u.product : ""}\n    ${u.tip}`).join("\n")
+      : "Takılı USB seri aygıt yok",
+  };
   return s;
 }
 
@@ -418,31 +500,35 @@ export function createControl(ctx) {
   let globalView = storeGet("rbox.ctl.view") === "hasta" ? "hasta" : "cihaz";
   let hideNames = storeGet("rbox.ctl.hideNames") !== "0";
   let patientsBusy = false, patientsLoaded = false, patientStatus = "";
+  // Kart | Liste görünümü ve "Ağ ayrıntıları" (tüm kartlarda AĞ bölümü) bu tarayıcıda hatırlanır
+  let layout = storeGet("rbox.ctl.layout") === "liste" ? "liste" : "kart";
+  let netOpen = storeGet("rbox.ctl.net") !== "0";
 
+  // Araç çubuğu: düğmeler yalnız simge, adı ve ne yaptığı ipucunda (WPF 1.58.1). Aç / kapat düğmeleri açıkken vurgulu.
   root.innerHTML = `
     <section class="card">
       <div class="card-h row" style="justify-content:space-between">GENEL KONTROL <b id="cSummary" style="font-size:13px;text-transform:none;letter-spacing:0;color:var(--text)">Cihaz listesi yüklenmedi</b></div>
       <div class="card-b row">
         <button class="btn primary ib" id="cRefresh" title="Yenile · tüm cihazları yeniden kontrol et">${ICONS.redo}</button>
-        <label class="chk"><input type="checkbox" id="cAuto"> Otomatik yenile</label>
+        <button class="btn ib tgl" id="cAuto" aria-pressed="false">${ICONS.timer}</button>
         <select id="cSecs" title="Otomatik yenileme aralığı"><option value="10">10 sn</option><option value="15" selected>15 sn</option><option value="30">30 sn</option><option value="60">60 sn</option></select>
-        <button class="btn icon" id="cToggle" title="Tüm odaları daralt / genişlet" style="border-color:var(--border-strong)">${ICONS.chevrons}</button>
+        <button class="btn ib" id="cToggle" title="Tüm odaları daralt / genişlet">${ICONS.chevrons}</button>
         <span class="row tight"><input type="text" id="cNewIp" class="mono-input" placeholder="IP adresi" style="width:150px" autocomplete="off"
           title="Listede olmayan bir cihazı ekleyin: IP yazıp Enter ya da + (Oda belirtilmemiş grubuna kart eklenir)">
         <button class="btn ib" id="cAddIp" title="Ekle · IP'yi listeye ekle">${ICONS.plus}</button></span>
         <span class="sm muted" id="cNote"></span>
         <span class="spacer" style="flex:1"></span>
-        <button class="btn" id="cRestartAll" title="Listedeki tüm cihazlarda serialworker.service'i yeniden başlatır (onay istenir)">${ICONS.term} SerialWorker'ı yeniden başlat (tümü)</button>
-        <button class="btn danger" id="cRebootAll" title="Listedeki tüm cihazları yeniden başlatır (onay istenir)">${ICONS.power} Tümünü yeniden başlat</button>
+        <button class="btn ib" id="cRestartAll" title="SerialWorker'ı yeniden başlat (tümü) · listedeki tüm cihazlarda serialworker.service yeniden başlatılır (onay istenir)">${ICONS.term}</button>
+        <button class="btn ib" id="cRebootAll" title="Tümünü yeniden başlat · listedeki tüm cihazlar yeniden başlatılır (onay istenir)" style="color:var(--error-text)">${ICONS.power}</button>
       </div>
       <div class="card-b row" style="padding-top:0">
-        <span class="sm muted">Kartlar</span>
-        <span class="chips" id="cView">
-          <button class="chip" data-v="cihaz" title="Tüm kartlarda RasyoBOX istatistikleri">Cihaz</button>
-          <button class="chip" data-v="hasta" title="Tüm kartlarda yataktaki hasta (YBDB modülündeki bağlantı kullanılır)">Hasta</button>
-        </span>
-        <label class="chk" title="Hasta adlarını &quot;A*** Y***&quot; olarak göster (ekran paylaşımı için)"><input type="checkbox" id="cHide"> İsimleri gizle</label>
-        <button class="btn mini" id="cPatients" title="Hasta bilgilerini YBDB'den yeniden oku (SSH gerekmez)">${ICONS.redo} Hasta bilgilerini yenile</button>
+        <div class="seg mini" id="cLayout" role="tablist" aria-label="Görünüm">
+          <button data-l="kart" title="Görünüm: kart">${ICONS.grid}</button><button data-l="liste" title="Görünüm: liste · her cihaz bir satır">${ICONS.list}</button></div>
+        <div class="seg mini" id="cView" role="tablist" aria-label="Kart içeriği">
+          <button data-v="cihaz" title="Cihaz · tüm kartlarda RasyoBOX istatistikleri">${ICONS.chip}</button><button data-v="hasta" title="Hasta · tüm kartlarda yataktaki hasta (YBDB modülündeki bağlantı kullanılır)">${ICONS.user}</button></div>
+        <button class="btn ib tgl" id="cHide" aria-pressed="false">${ICONS.eyeOff}</button>
+        <button class="btn ib tgl" id="cNet" aria-pressed="false">${ICONS.globe}</button>
+        <button class="btn ib" id="cPatients" title="Hasta bilgilerini yenile · YBDB'den yeniden oku (SSH gerekmez)">${ICONS.redo}</button>
         <span class="sm muted" id="cPStatus"></span>
       </div>
     </section>
@@ -455,6 +541,7 @@ export function createControl(ctx) {
     note: $("#cNote", root), grid: $("#cGrid", root), status: $("#cStatus", root),
     restartAll: $("#cRestartAll", root), rebootAll: $("#cRebootAll", root),
     view: $("#cView", root), hide: $("#cHide", root), patients: $("#cPatients", root), pstatus: $("#cPStatus", root),
+    layout: $("#cLayout", root), net: $("#cNet", root),
   };
 
   const setStatus = (t) => { statusText = t; el.status.textContent = `${t}  ·  SSH bilgileri üst banttaki SSH düğmesinden, hasta bilgileri YBDB modülündeki bağlantıdan alınır.`; };
@@ -468,7 +555,7 @@ export function createControl(ctx) {
       excelMac: macValid(macDisplay(r.mac)) ? macDisplay(r.mac) : "",
       status: ip ? { text: "Bekleniyor", sev: "muted" } : { text: "RasyoBOX yok", sev: "muted" },
       online: false, unreachable: false, busy: false, lastUpdate: "",
-      s: null, swVersion: "", rebootRequired: false,
+      s: null, swVersion: "", rebootRequired: false, rebootReason: "", netOpen,
       bedOnly: !ip, fromYbdb, view: globalView,
       pt: { state: "noybdb", message: "YBDB'ye bağlı değil — YBDB modülünden bağlanın" },
       older: {},                             // "Daha eskisini ara" sonucu: { monitor: {hastaId, rows}, vent: {...} }
@@ -614,40 +701,58 @@ export function createControl(ctx) {
       <div class="cbody">
       <div class="pbody${pat ? "" : " hid"}">${patientHtml(d)}</div>`;
     if (d.bedOnly) return h + `</div>${footHtml(d, disabled)}</div>`;
+    const t = tiles(d), mem = s?.mem, disk = s?.disk;
+    const diskTip = `Depolama: ${disk?.text ?? DASH}${s?.cardText ? " · " + s.cardText : ""}`
+      + (disk && ["warn", "error"].includes(disk.sev) ? "\nDisk dolmak üzere: Cihaz Güncelleme → Hatalı Log'ları temizle / Dosya temizliği ya da Hafızayı genişlet" : "");
+    const expand = `<button class="btn mini ib xbtn" data-act="expand" data-id="${d.id}" ${!s || !s.canExpand || busy ? "disabled" : ""} title="${esc(s?.expandTip ?? "Bir kez okunduktan sonra kullanılabilir")}">${ICONS.down}</button>`;
+    // Kompakt kart (WPF 1.55–1.58): sıcaklık · çalışma süresi · işlemci / bellek / depolama yüzde + kullanılan/toplam · kareler · AĞ
     h += `<div class="dbody${pat ? " hid" : ""}">
-      <div class="tilebox">
-        <div><div class="tk">Sıcaklık</div><div class="tv ${s?.temp.sev ?? ""}">${esc(s?.temp.text ?? DASH)}</div></div><i></i>
-        <div><div class="tk">Çalışma süresi</div><div class="tv">${esc(s?.uptime ?? DASH)}</div></div>
+      <div class="trow" title="Sıcaklık · çalışma süresi"><b class="tv ${s?.temp.sev ?? ""}">${esc(s?.temp.text ?? DASH)}</b><span class="muted">·</span><span class="upt">${esc(s?.uptime ?? DASH)}</span></div>
+      <div class="res3">
+        ${resCell("İşlemci", s?.cpu?.text, s?.cpu?.sev, s?.cpu?.detail, "İşlemci kullanımı (0,5 sn ölçüm). Yük: son 1 dakikanın ortalaması (çekirdek sayısını aşarsa işlemci yetişemiyor).")}
+        ${resCell("Bellek", mem?.pctText, mem?.sev, mem?.text, `Bellek (RAM): ${mem?.text ?? DASH}`)}
+        ${resCell("Depolama", disk?.pctText, disk?.sev, disk?.text, diskTip, expand)}
       </div>
-      <div class="meterrow" title="İşlemci kullanımı (0,5 sn ölçüm). Yük: son 1 dakikanın ortalaması (çekirdek sayısını aşarsa işlemci yetişemiyor)."><span><span class="lbl">İşlemci</span> <span class="muted sm">${esc(s?.cpu?.detail ?? "")}</span></span><b class="${s?.cpu?.sev ?? "none"}">${esc(s?.cpu?.text ?? DASH)}</b></div>
-      <div class="meter ${s?.cpu?.sev === "error" ? "crit" : s?.cpu?.sev === "warn" ? "hi" : ""}"><div style="width:${s?.cpu?.pct ?? 0}%"></div></div>
-      <div class="meterrow" style="margin-top:10px"><span><span class="lbl">Bellek</span> ${esc(s?.mem.text ?? DASH)}</span><b>%${s?.mem.pct ?? 0}</b></div>
-      <div class="meter ${(s?.mem.pct ?? 0) >= 90 ? "crit" : (s?.mem.pct ?? 0) >= 75 ? "hi" : ""}"><div style="width:${s?.mem.pct ?? 0}%"></div></div>
-      <div class="meterrow" style="margin-top:10px"><span><span class="lbl">Depolama</span> ${esc(s?.disk.text ?? DASH)} <span class="muted sm">${esc(s?.cardText ?? "")}</span></span>
-        <span class="row tight" style="gap:6px"><b>%${s?.disk.pct ?? 0}</b>
-          <button class="btn mini" data-act="expand" data-id="${d.id}" ${!s || !s.canExpand || busy ? "disabled" : ""} title="${esc(s?.expandTip ?? "Bir kez okunduktan sonra kullanılabilir")}">${ICONS.down}</button></span></div>
-      <div class="meter ${(s?.disk.pct ?? 0) >= 90 ? "crit" : (s?.disk.pct ?? 0) >= 75 ? "hi" : ""}"><div style="width:${s?.disk.pct ?? 0}%"></div></div>
-      ${d.rebootRequired ? '<div class="warnbox w">⚠ Depolama genişletildi — etkili olması için yeniden başlatma gerekli</div>' : ""}
-      <div class="swrow"><span class="row tight"><span class="muted">SerialWorker</span>${badge(s?.swText ?? DASH, s?.swSev ?? "muted")}${d.swVersion ? `<span class="badge sev-info" title="SerialWorkerServiceVol61.dll sürümü">${esc(d.swVersion)}</span>` : ""}</span>
-        <span class="muted">Yük <span style="color:var(--text)">${esc(s?.load ?? DASH)}</span></span></div>`;
+      ${d.rebootRequired ? `<div class="warnbox w">⚠ ${esc(d.rebootReason || "Değişiklik")} — etkili olması için yeniden başlatma gerekli</div>` : ""}
+      <div class="tk tsec">Hizmetler</div>
+      <div class="stiles">${["sw", "web", "tui", "cron"].map((k) => tileHtml(d, t[k])).join("")}</div>
+      <div class="tk tsec">Sistem</div>
+      <div class="stiles">${["login", "hdmi", "usb"].map((k) => tileHtml(d, t[k])).join("")}</div>
+      ${netHtml(d)}`;
+    return h + `</div></div>${footHtml(d, disabled)}</div>`;
+  }
 
-    if (s?.hdmi) h += `<div class="hdmirow" title="${esc(s.hdmi.tip)}"><span class="tk">HDMI</span>${badge(s.hdmi.text, s.hdmi.sev)}</div>`;
-    // CRON ve SWTUI yan yana, durum simgeyle: ✓ etkin / yüklü · ✕ devre dışı / yüklü değil · ⚠ durmuş (ayrıntı ipucunda)
-    if (s?.cron || s?.tui) {
-      const glyph = (sev) => `<i class="sglyph ${sev === "ok" ? "ok" : sev === "warn" ? "warn" : "off"}">${sev === "ok" ? ICONS.check : sev === "warn" ? ICONS.warn : ICONS.xmark}</i>`;
-      h += `<div class="svcrow">`
-        + (s.cron ? `<span title="${esc(s.cron.tip)}"><span class="tk">CRON</span>${glyph(s.cron.sev)}</span>` : "")
-        + (s.tui ? `<span title="${esc(s.tui.tip)}"><span class="tk">SWTUI</span>${glyph(s.tui.sev)}${s.tui.ver ? `<span class="mono txt-muted sver">${esc(s.tui.ver)}</span>` : ""}</span>` : "")
-        + `</div>`;
-    }
-    if (s) {
-      h += `<div class="tk" style="margin-top:14px">USB</div>` +
-        (s.usb.length === 0 ? `<div class="sm muted" style="margin-top:6px">Takılı USB seri aygıt yok</div>` :
-          s.usb.map((u) => `<div class="usbrow" title="${esc(u.tip)}"><span class="badge sev-info">${esc(u.name)}</span>
-            <div style="min-width:0"><div style="font-size:12px">${esc(u.vendor)}</div><div class="sm muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.product)}</div></div></div>`).join(""));
-    }
+  /** İşlemci / bellek / depolama hücresi: yüzde (eşik rengi) + altında kullanılan / toplam. */
+  const resCell = (k, v, sev, sub, tip, extra = "") => `<div class="rc" title="${esc(tip)}"><div class="tk">${k}</div>
+    <div class="rv"><b class="tv ${v ? sev ?? "" : ""}">${esc(v || DASH)}</b>${extra}</div><div class="sm muted rs">${esc(sub || "")}</div></div>`;
 
-    h += `<hr><div class="tk">Ağ</div>`;
+  /** Kartın kareleri: tıklanabilir olanlar (kurulu, durumu okundu, cihaz çevrimiçi ve boşta) düğmedir. */
+  function tiles(d) {
+    const s = d.s, t = s?.t ?? {};
+    const live = d.online && !d.busy && !busy;
+    const none = (label) => ({ state: "unknown", sub: DASH, tip: s ? `${label}: bu bilgi okunamadı (ajanı güncelleyin)` : "Cihaz henüz okunmadı", click: false });
+    const mk = (key, label, x) => ({ key, label, ...(x ? { ...x, click: !!x.can && live } : none(label)) });
+    const sw = t.sw && { ...t.sw, sub: d.swVersion || (t.sw.missing ? "yok" : DASH),
+      tip: t.sw.tip0 + (d.swVersion ? `\nSerialWorkerServiceVol61.dll sürümü ${d.swVersion}` : "") + (t.sw.can ? hint(t.sw.off) : "") };
+    return {
+      sw: mk("sw", "SW", sw), web: mk("web", "WEB", t.web), tui: mk("tui", "TUI", t.tui), cron: mk("cron", "CRON", t.cron),
+      login: mk("login", "LOGIN", t.login), hdmi: mk("hdmi", "HDMI", t.hdmi), usb: mk("usb", "USB", t.usb),
+    };
+  }
+
+  const tileHtml = (d, x) => {
+    const inner = `<b>${x.label}</b><small>${esc(x.sub)}</small>`;
+    return x.click
+      ? `<button class="stile st-${x.state}" data-act="tog" data-t="${x.key}" data-id="${d.id}" title="${esc(x.tip)}">${inner}</button>`
+      : `<span class="stile st-${x.state}" title="${esc(x.tip)}">${inner}</span>`;
+  };
+
+  /** Kart başına açılır / kapanır AĞ bölümü (açılışta araç çubuğundaki "Ağ ayrıntıları"na göre). */
+  function netHtml(d) {
+    const s = d.s;
+    let h = `<button class="nethead" data-act="net" data-id="${d.id}" aria-expanded="${d.netOpen}" title="Ağ ayrıntılarını ${d.netOpen ? "gizle" : "göster"}">
+      <span class="tk">Ağ</span><span class="sm muted">${esc(s?.viaText ?? "")}</span><span class="chev">${d.netOpen ? "▾" : "▸"}</span></button>`;
+    if (!d.netOpen) return h;
     if (!s?.hasNetInfo) h += `<div class="sm muted" style="margin-top:6px">Cihaza bağlanınca arayüz bilgileri (IP, ağ geçidi, MAC, Wi-Fi) burada görünür.</div>`;
     if (s?.hasWifi) {
       h += `<div class="wifi"><div><b class="row tight" style="gap:6px;flex-wrap:nowrap">${ICONS.wifi}${esc(s.ssid)}</b><div class="sm muted">${esc(s.signalText)}</div></div>
@@ -655,38 +760,71 @@ export function createControl(ctx) {
     }
     for (const n of s?.ifaces ?? []) h += ifaceHtml(n);
     if (s?.excelMacMismatch) h += `<div class="warnbox e">⚠ Excel'deki MAC <span class="mono">${esc(d.excelMac)}</span> hiçbir arayüzle eşleşmiyor</div>`;
-    return h + `</div></div>${footHtml(d, disabled)}</div>`;
+    return h;
   }
 
-  /** Kart işlemleri: kartın altına sabit (aynı satırdaki kartlar aynı boya uzar). */
+  /** Cihaz düğmeleri (kart altı ve liste satırı): yenile, güncelle, SerialWorker'ı yeniden başlat, TTY, yeniden başlat. */
+  function actsHtml(d, disabled, withRefresh = true) {
+    return (withRefresh ? `<button class="btn mini ib" data-act="refresh" data-id="${d.id}" ${disabled} title="Bu cihazı yenile">${ICONS.redo}</button>` : "")
+      + `<button class="btn mini ib" data-act="update" data-id="${d.id}" title="İlgili cihazı güncelle (Cihaz Güncelleme'ye geçer)">${ICONS.upload}</button>
+      <button class="btn mini ib" data-act="restartSw" data-id="${d.id}" ${disabled} title="SerialWorker servisini yeniden başlat">${ICONS.term}</button>
+      <button class="btn mini ib" data-act="tty" data-id="${d.id}" title="TTY ekranını göster · cihazın konsolu (TTY1 / TTY2), TTY1'e yazılabilir">${ICONS.screen}</button>
+      <button class="btn mini ib" data-act="reboot" data-id="${d.id}" ${disabled} title="Cihazı yeniden başlat" style="color:var(--error-text)">${ICONS.power}</button>`;
+  }
+
+  /** Kart işlemleri: kartın altına sabit (aynı satırdaki kartlar aynı boya uzar). Son okuma saati düğmelerle aynı satırda. */
   function footHtml(d, disabled) {
     const pat = showPatient(d);
-    let h = `<div class="foot"><hr>${!d.bedOnly && d.lastUpdate ? `<div class="sm muted" style="margin-bottom:6px">Son okuma ${esc(d.lastUpdate)}</div>` : ""}
-      <div class="acts">
-        <button class="btn mini" data-act="refresh" data-id="${d.id}" ${pat ? "" : disabled} title="${pat ? "Hasta bilgilerini yenile (YBDB)" : "Bu cihazı yenile"}">${ICONS.redo}</button>`;
-    if (!d.bedOnly) h += `
-        <button class="btn mini" data-act="update" data-id="${d.id}" title="İlgili cihazı güncelle (Cihaz Güncelleme'ye geçer)">${ICONS.upload}</button>
-        <button class="btn mini" data-act="restartSw" data-id="${d.id}" ${disabled} title="SerialWorker servisini yeniden başlat">${ICONS.term}</button>
-        <button class="btn mini" data-act="reboot" data-id="${d.id}" ${disabled} title="Cihazı yeniden başlat" style="color:var(--error-text)">${ICONS.power}</button>
-        <button class="btn mini ib" data-act="remove" data-id="${d.id}" ${disabled} title="Listeden kaldır (Excel dosyasına dokunulmaz)">${ICONS.trash}</button>`;
+    let h = `<div class="foot"><hr><div class="acts">`;
+    if (d.bedOnly || pat) h += `<button class="btn mini ib" data-act="refresh" data-id="${d.id}" title="Hasta bilgilerini yenile (YBDB)">${ICONS.redo}</button>`;
+    if (!d.bedOnly) h += actsHtml(d, disabled, !pat)
+      + `<button class="btn mini ib" data-act="remove" data-id="${d.id}" ${disabled} title="Listeden kaldır (Excel dosyasına dokunulmaz)">${ICONS.trash}</button>`;
+    if (!d.bedOnly && d.lastUpdate) h += `<span class="lastread sm muted" title="Son okuma: ${esc(d.lastUpdate)}">${esc(d.lastUpdate)}</span>`;
     return h + `</div></div>`;
+  }
+
+  /** Liste görünümünde bir cihaz satırı (WPF DeviceRow). Sütunlar .lgrid ile başlıkla aynı. */
+  function rowHtml(d) {
+    const s = d.s, disabled = busy ? "disabled" : "";
+    const cls = ["lrow lgrid", d.unreachable ? "unreach" : "", d.busy ? "busy" : ""].join(" ");
+    let h = `<div class="${cls}" data-id="${d.id}"><span class="bar" style="background:${unitColor(d.room)}"></span>
+      <div class="lname"><b title="${esc(d.yatakAdi)}">${esc(d.yatakAdi)}</b><small>${esc(rooms[d.room].title)}</small></div>`;
+    if (d.bedOnly) return h + `<div class="lspan sm muted">RasyoBOX yok · Yatak ID <span class="mono">${esc(d.yatakId)}</span></div></div>`;
+    const t = tiles(d);
+    const val = (v, sev, tip = "") => `<b class="tv ${v ? sev ?? "" : ""}" title="${esc(tip)}">${esc(v || DASH)}</b>`;
+    return h + `<div class="lip" title="${esc(s?.host ?? "")}"><span class="mono">${esc(d.ip)}</span><button class="copy-ip ccopy" data-act="copyip" data-id="${d.id}" title="IP adresini kopyala">${ICONS.copy}</button></div>
+      <div class="lstate">${badge(d.status.text, d.status.sev)}</div>
+      <div class="stiles">${["sw", "web", "tui", "cron"].map((k) => tileHtml(d, t[k])).join("")}</div>
+      ${val(s?.temp.text !== DASH ? s?.temp.text : "", s?.temp.sev, "Sıcaklık")}
+      ${val(s?.cpu?.text, s?.cpu?.sev, s?.cpu?.detail ?? "")}
+      ${val(s?.mem.pctText, s?.mem.sev, s ? "Bellek: " + s.mem.text : "")}
+      ${val(s?.disk.pctText, s?.disk.sev, s ? `Depolama: ${s.disk.text}${s.cardText ? " · " + s.cardText : ""}` : "")}
+      <span class="upt" title="Çalışma süresi">${esc(s?.uptime ?? DASH)}</span>
+      <div class="acts">${actsHtml(d, disabled)}</div></div>`;
   }
 
   function render() {
     el.summary.textContent = summary();
     el.refresh.disabled = busy || devices.length === 0;
     el.restartAll.disabled = el.rebootAll.disabled = busy || deviceCards().length === 0;
-    for (const c of el.view.children) c.setAttribute("aria-checked", String(c.dataset.v === globalView));
-    el.hide.checked = hideNames;
+    for (const c of el.view.children) c.setAttribute("aria-selected", String(c.dataset.v === globalView));
+    for (const c of el.layout.children) c.setAttribute("aria-selected", String(c.dataset.l === layout));
+    const tgl = (b, on, name, what) => { b.setAttribute("aria-pressed", String(on)); b.title = `${name}: ${on ? "açık" : "kapalı"} · ${what}`; };
+    tgl(el.auto, autoRefresh, "Otomatik yenile", "seçilen aralıkla tüm cihazları yeniden okur");
+    tgl(el.hide, hideNames, "İsimleri gizle", 'hasta adlarını "A*** Y***" olarak gösterir (ekran paylaşımı için)');
+    tgl(el.net, netOpen, "Ağ ayrıntıları", "tüm kartlarda AĞ bölümünü gösterir / gizler");
     el.patients.disabled = patientsBusy || devices.length === 0;
     el.pstatus.textContent = patientStatus;
 
     if (devices.length === 0) {
+      el.grid.className = "";
       el.grid.innerHTML = `<section class="card"><div class="placeholder"><h2>Cihaz listesi yüklenmedi</h2>
         <p>Üst banttaki "Cihaz listesi" düğmesinden Excel seçin — tüm modüller aynı listeyi kullanır.</p></div></section>`;
       return;
     }
-    let html = "";
+    const list = layout === "liste";
+    let html = list ? `<div class="lhead lgrid"><span></span><span>Yatak / oda</span><span>IP</span><span>Durum</span><span>Hizmetler</span>
+      <span>Sıcaklık</span><span>CPU</span><span>RAM</span><span>Disk</span><span>Çalışma</span><span></span></div>` : "";
     for (const rm of rooms) {
       const items = devices.filter((d) => d.room === rm.idx);
       if (items.length === 0) continue;
@@ -694,9 +832,10 @@ export function createControl(ctx) {
       const beds = items.filter((d) => d.bedOnly).length, n = items.length - beds;
       html += `<div class="cgroup" data-room="${rm.idx}"><span class="gchip" style="background:${unitColor(rm.idx)};margin:0"></span>${rm.collapsed ? "▸" : "▾"} ${esc(rm.title)}
         <span class="gcount">${[n ? (online > 0 ? `${n} cihaz · ${online} çevrimiçi` : `${n} cihaz`) : "", beds ? `${beds} RasyoBOX'sız yatak` : ""].filter(Boolean).join(" · ")}${problems ? ` · <span class="txt-error">${problems} ulaşılamıyor</span>` : ""}</span></div>`;
-      if (!rm.collapsed) html += `<div class="cards">${items.map(cardHtml).join("")}</div>`;
+      if (!rm.collapsed) html += list ? `<div class="lrows">${items.map(rowHtml).join("")}</div>` : `<div class="cards">${items.map(cardHtml).join("")}</div>`;
     }
-    el.grid.innerHTML = html;
+    el.grid.className = list ? "ltable" : "";
+    el.grid.innerHTML = list ? `<div class="lin">${html}</div>` : html;
   }
 
   // Hasta sekmesindeki "x dk önce" ve renkler / simge hareketi zamanla değişir: dakikada bir yeniden çiz
@@ -842,11 +981,11 @@ export function createControl(ctx) {
     }
   }
 
-  /** Komutu hedeflerde çalıştırır (onay ister); başarılı olan cihazların listesini döner. */
+  /** Komutu hedeflerde çalıştırır (onay ister); başarılı olan cihazların listesini, hiç çalışmadıysa (vazgeçildi) null döner. */
   async function exec(action, list, question, doneText, skipConfirm = false) {
-    if (busy || list.length === 0) return [];
-    if (!skipConfirm && !confirm(question)) return [];
-    if (ctx.requireSsh && !(await ctx.requireSsh())) return;
+    if (busy || list.length === 0) return null;
+    if (!skipConfirm && !confirm(question)) return null;
+    if (ctx.requireSsh && !(await ctx.requireSsh())) return null;
     busy = true; setStatus("Komut gönderiliyor…");
     abort = new AbortController();
     render();
@@ -875,7 +1014,7 @@ export function createControl(ctx) {
 
   const restartSw = async (list, question) => {
     const ok = await exec("restartSw", list, question, "SerialWorker yeniden başlatıldı");
-    if (ok.length) { await new Promise((r) => setTimeout(r, 2000)); await refresh(deviceCards()); }
+    if (ok?.length) { await new Promise((r) => setTimeout(r, 2000)); await refresh(deviceCards()); }
   };
   const reboot = (list, question) => exec("reboot", list, question, "Yeniden başlatılıyor");
 
@@ -884,16 +1023,51 @@ export function createControl(ctx) {
     const ok = await exec("expand", [d],
       `${d.yatakAdi} (${d.ip}) — depolama SD kartın tamamına genişletilsin mi?${sizes}\n\nYeni boyut cihaz yeniden başlatılınca geçerli olur.`,
       "Genişletme tamamlandı");
+    if (!ok) return;
     if (ok.length === 0) {
       if (d.lastUpdate && !d.online) toast(`${d.yatakAdi} (${d.ip}) — depolama genişletilemedi: ${d.lastUpdate}`, 6000);
       return;
     }
-    d.rebootRequired = true;
+    d.rebootRequired = true; d.rebootReason = "Depolama genişletildi";
     d.status = { text: "Yeniden başlatma gerekli", sev: "warn" }; d.online = true;
     render();
     // Genişletme ancak yeniden başlatmadan sonra etkili: soru zaten sorulduğu için ikinci onay istenmez
     if (confirm(`${d.yatakAdi} (${d.ip}) — genişletme tamamlandı.\n\nYeni boyutun kullanılabilmesi için cihaz YENİDEN BAŞLATILMALI.\nŞimdi yeniden başlatılsın mı?`))
       await exec("reboot", [d], "", "Yeniden başlatılıyor", true);
+  }
+
+  /**
+   * Kareye tıklama: SW / WEB / TUI / CRON servisi kalıcı olarak açılır (unmask + enable + start) ya da kapatılır
+   * (disable + stop); LOGIN raspi-config ile otomatik girişi değiştirir. Sonra kart yeniden okunur (gerçek son durum).
+   */
+  async function toggle(d, key) {
+    const x = tiles(d)[key];
+    if (!x?.click) return;
+    const who = `${d.yatakAdi} (${d.ip})`;
+    let ok;
+    if (key === "login") {
+      const off = x.off, opt = x.desktop ? (off ? "B3" : "B4") : (off ? "B1" : "B2");
+      ok = await exec("login" + opt, [d],
+        `${who} — otomatik giriş ${off ? "KAPATILSIN" : "AÇILSIN"} mı?\n\n`
+        + (off ? "Açılışta kullanıcı adı / şifre sorulur." : "Cihaz açılınca SSH kullanıcısıyla otomatik giriş yapılır.")
+        + "\nDeğişiklik cihaz yeniden başlatılınca geçerli olur.",
+        off ? "Otomatik giriş kapatıldı · yeniden başlatma gerekli" : "Otomatik giriş açıldı · yeniden başlatma gerekli");
+      if (ok?.length) { d.rebootRequired = true; d.rebootReason = "Otomatik giriş değişti"; }
+    } else {
+      const name = { sw: "SerialWorker", web: "RasyoBOX web arayüzü", tui: "swtui (TUI)", cron: "cron" }[key];
+      ok = await exec(key + (x.off ? "Off" : "On"), [d],
+        (x.off ? `${who} — ${name} KAPATILSIN mı?\n\nServis durdurulur ve cihaz yeniden başlatılınca da kapalı kalır.`
+          : `${who} — ${name} AÇILSIN mı?\n\nServis başlatılır ve cihaz her açıldığında otomatik başlar.`)
+        + (key === "sw" && x.off ? "\n\nDİKKAT: SerialWorker kapalıyken cihaz hasta verisi GÖNDERMEZ." : ""),
+        `${name} ${x.off ? "kapatıldı" : "açıldı"}`);
+      if (ok && !ok.length) toast(`${who} — ${name}: ${d.lastUpdate || "işlem başarısız"}`, 6000);
+    }
+    if (ok) await refresh([d]);
+  }
+
+  async function openTtyFor(d) {
+    if (ctx.requireSsh && !(await ctx.requireSsh())) return;
+    openTty(d.ip, d.yatakAdi !== d.ip ? `${d.yatakAdi} (${d.ip})` : d.ip);
   }
 
   // ── Elle IP ekleme (WPF ControlViewModel.AddIp): SSH şifresi kayıtlıysa kart hemen okunur ──
@@ -919,11 +1093,20 @@ export function createControl(ctx) {
   el.restartAll.addEventListener("click", () => { const c = deviceCards(); restartSw(c, `${c.length} cihaz için: SerialWorker servisi yeniden başlatılsın mı?`); });
   el.rebootAll.addEventListener("click", () => { const c = deviceCards(); reboot(c, `${c.length} cihaz için: Cihazlar YENİDEN BAŞLATILSIN mı?\n\nCihazlar yaklaşık 1 dakika boyunca veri gönderemez.`); });
   el.view.addEventListener("click", (e) => { const c = e.target.closest("[data-v]"); if (c) setGlobalView(c.dataset.v); });
-  el.hide.addEventListener("change", () => { hideNames = el.hide.checked; storeSet("rbox.ctl.hideNames", hideNames ? "1" : "0"); render(); });
+  el.hide.addEventListener("click", () => { hideNames = !hideNames; storeSet("rbox.ctl.hideNames", hideNames ? "1" : "0"); render(); });
+  el.net.addEventListener("click", () => {
+    netOpen = !netOpen; storeSet("rbox.ctl.net", netOpen ? "1" : "0");
+    devices.forEach((d) => { d.netOpen = netOpen; });
+    render();
+  });
+  el.layout.addEventListener("click", (e) => {
+    const c = e.target.closest("[data-l]");
+    if (c && c.dataset.l !== layout) { layout = c.dataset.l; storeSet("rbox.ctl.layout", layout); render(); }
+  });
   el.patients.addEventListener("click", () => refreshPatients());
   $("#cToggle", root).addEventListener("click", () => { const anyOpen = rooms.some((r) => !r.collapsed); rooms.forEach((r) => (r.collapsed = anyOpen)); render(); });
 
-  el.auto.addEventListener("change", () => { autoRefresh = el.auto.checked; applyTimer(); if (autoRefresh && !busy) refreshAll(); });
+  el.auto.addEventListener("click", () => { autoRefresh = !autoRefresh; applyTimer(); render(); if (autoRefresh && !busy) refreshAll(); });
   el.secs.addEventListener("change", () => { refreshSeconds = Number(el.secs.value); applyTimer(); });
   function applyTimer() {
     clearInterval(timer); timer = null;
@@ -937,6 +1120,8 @@ export function createControl(ctx) {
     const d = dev(+b.dataset.id); if (!d) return;
     if (b.dataset.act === "copyip") { copyIpBtn(d.ip, b); return; }
     if (b.dataset.act === "update") { ctx.openInUpdate?.(d.ip); return; }
+    if (b.dataset.act === "tty") { openTtyFor(d); return; }
+    if (b.dataset.act === "net") { d.netOpen = !d.netOpen; render(); return; }
     // Hasta tarafı SSH işlemlerinden bağımsız: cihazlar okunurken de kullanılabilir
     if (b.dataset.act === "view") {
       d.view = b.dataset.v; render();
@@ -944,13 +1129,14 @@ export function createControl(ctx) {
       return;
     }
     if (b.dataset.act === "older") { searchOlder(d, b.dataset.sec); return; }
-    if (b.dataset.act === "refresh" && showPatient(d)) { refreshPatients(); return; }
+    if (b.dataset.act === "refresh" && showPatient(d) && layout === "kart") { refreshPatients(); return; }
     if (busy) { toast("Bir işlem sürüyor, bitince tekrar deneyin."); return; }
     switch (b.dataset.act) {
       case "refresh": refresh([d]); break;
       case "restartSw": restartSw([d], `${d.yatakAdi} (${d.ip}) — SerialWorker servisi yeniden başlatılsın mı?`); break;
       case "reboot": reboot([d], `${d.yatakAdi} (${d.ip}) YENİDEN BAŞLATILSIN mı?`); break;
       case "expand": expandStorage(d); break;
+      case "tog": toggle(d, b.dataset.t); break;
       case "remove": devices = devices.filter((x) => x !== d); updateNote(); render(); break;
     }
   });

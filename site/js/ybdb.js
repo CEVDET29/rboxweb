@@ -41,6 +41,7 @@ export function createYbdb() {
   let connected = false;
   let passDirty = false;
   let selectedOda = null;          // seçili odanın id'si
+  const closedOda = new Set(), closedYatak = new Set();   // katlanmış yoğun bakım grupları (odalar / yataklar tablosu)
   let odaSearch = "", yatakSearch = "", sadeceBos = false;
   let sortOda = { key: null, dir: 1 }, sortYatak = { key: null, dir: 1 };
   let cfg = { server: "", user: "RasyoUser", remember: false, hasPass: false };
@@ -95,8 +96,9 @@ export function createYbdb() {
     <div class="ybdb-grid">
       <section class="card">
         <div class="card-h row" style="justify-content:space-between">ODALAR <span class="sm muted" style="text-transform:none;letter-spacing:0;font-weight:500" id="yOdaCount">Bağlandıktan sonra listelenir</span></div>
-        <div class="card-b" style="padding-bottom:8px"><input type="search" id="yOdaSearch" placeholder="Oda ara: ad, bölüm, ID…" style="width:100%"></div>
-        <div class="table-wrap" style="max-height:calc(100vh - 380px + var(--gain, 0px))"><table class="fixed" data-cols="ybdb-oda" style="min-width:466px">
+        <div class="card-b row" style="padding-bottom:8px;flex-wrap:nowrap"><input type="search" id="yOdaSearch" placeholder="Oda ara: ad, bölüm, ID…" style="flex:1;min-width:0">
+          <button class="btn ib" id="yToggleGroups" title="Tüm yoğun bakımları daralt / genişlet (iki tabloda)">${ICONS.chevrons}</button></div>
+        <div class="table-wrap"><table class="fixed" data-cols="ybdb-oda" style="min-width:466px">
           <colgroup><col style="width:56px"><col><col style="width:140px"><col style="width:150px"></colgroup>
           <thead><tr id="yOdaHead"></tr></thead><tbody id="yOdaBody"></tbody></table></div>
       </section>
@@ -111,7 +113,7 @@ export function createYbdb() {
           <label class="chk" title="Yatak ID'si cihaz listesinde (Excel) olan yatakların Yatak ID'si yeşil etiketle gösterilir"><input type="checkbox" id="yXlCompare"> Excel ile karşılaştır</label>
           <label class="chk" title="Yatak ile Yatak ID arasında, cihaz listesinde (Excel) aynı yatak ID'ye denk gelen satırın IP adresi"><input type="checkbox" id="yXlIp"> Excel IP'sini göster</label>
         </div>
-        <div class="table-wrap" id="yYatakWrap" style="max-height:calc(100vh - 380px + var(--gain, 0px))"></div>
+        <div class="table-wrap" id="yYatakWrap"></div>
       </section>
     </div>
     </div>
@@ -279,7 +281,25 @@ export function createYbdb() {
     const list = visibleOdalar();
     const total = data.odalar.length;
     el.odaCount.textContent = list.length === total ? `${total} oda` : `${list.length} / ${total} oda gösteriliyor`;
-    el.odaBody.innerHTML = list.length ? list.map((o) => {
+    el.odaBody.innerHTML = list.length ? groups(list).map(([k, items]) => {
+      const dolu = items.reduce((a, o) => a + (o.doluSayisi || 0), 0), top = items.reduce((a, o) => a + (o.yatakSayisi || 0), 0);
+      return groupRow(closedOda, k, items, 4, `${items.length} oda · ${dolu} / ${top} dolu`)
+        + (closedOda.has(k) ? "" : items.map(odaRow).join(""));
+    }).join("") : `<tr><td class="empty" colspan="4">Aramaya uyan oda yok.</td></tr>`;
+  }
+
+  // ── Yoğun bakım (bölüm) grupları: başlık satırı tıklanınca katlanır; açık/kapalı durumu yenilemede korunur ──
+  const groupKey = (x) => x.bolumAdi || "(Bölüm yok)";
+  function groups(list) {
+    const m = new Map();
+    for (const x of list) { const k = groupKey(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); }
+    return [...m].sort((a, b) => a[0].localeCompare(b[0], "tr"));
+  }
+  const groupRow = (closed, k, items, n, info) => `<tr class="group" data-g="${esc(k)}" style="cursor:pointer"><td colspan="${n}">
+    ${items[0].renk >= 0 ? `<span class="gchip" style="background:${unitColor(items[0].renk)}"></span>` : ""}${closed.has(k) ? "▸" : "▾"} ${esc(k)}
+    <span class="gcount">${info}</span></td></tr>`;
+
+  function odaRow(o) {
       const pct = o.yatakSayisi ? Math.round((100 * o.doluSayisi) / o.yatakSayisi) : 0;
       return `<tr class="item" data-id="${esc(o.id)}" style="cursor:pointer${o.id === selectedOda ? ";background:var(--row-selected)" : ""}">
         <td class="mono">${esc(o.id)}</td>
@@ -287,7 +307,6 @@ export function createYbdb() {
         <td title="${esc(o.bolumAdi)}">${esc(o.bolumAdi) || DASH}</td>
         <td>${o.yatakSayisi ? `<div class="row tight" style="flex-wrap:nowrap"><span style="min-width:44px">${o.doluSayisi} / ${o.yatakSayisi}</span>
           <div class="progress" style="width:70px"><div style="width:${pct}%"></div></div></div>` : DASH}</td></tr>`;
-    }).join("") : `<tr><td class="empty" colspan="4">Aramaya uyan oda yok.</td></tr>`;
   }
 
   /** Bir yatağın Excel eşleşmesi: match = yatak ID Excel'de var; ip = ilk IP ("" = IP'siz satır, null = eşleşme yok); tip = ipucu. */
@@ -330,7 +349,14 @@ export function createYbdb() {
     const dolu = list.filter((y) => y.hastaId != null).length;
     const xl = list.filter((y) => excelYatak.has(yatakKey(y.yatakId))).length;
     el.ozet.textContent = `${list.length} yatak  ·  ${dolu} dolu  ·  ${list.length - dolu} boş` + (xlCompare && excelYatak.size ? `  ·  ${xl} Excel'de` : "");
-    el.yatakBody.innerHTML = list.length ? list.map((y) => {
+    el.yatakBody.innerHTML = list.length ? groups(list).map(([k, items]) => {
+      const d = items.filter((y) => y.hastaId != null).length;
+      return groupRow(closedYatak, k, items, n, `${items.length} yatak · ${d} dolu · ${items.length - d} boş`)
+        + (closedYatak.has(k) ? "" : items.map(yatakRow).join(""));
+    }).join("") : `<tr><td class="empty" colspan="${n}">Filtreye uyan yatak yok.</td></tr>`;
+  }
+
+  function yatakRow(y) {
       const isDolu = y.hastaId != null;
       const xi = xlInfo(y);
       const ipCell = !xlIp ? ""
@@ -348,13 +374,22 @@ export function createYbdb() {
         <td title="${esc(y.odaAdi)}">${chip(y.renk, y.odaAdi)}</td>
         <td title="${esc(y.bolumAdi)}">${esc(y.bolumAdi) || DASH}</td>
         <td class="mono">${esc(y.basamak) || DASH}</td></tr>`;
-    }).join("") : `<tr><td class="empty" colspan="${n}">Filtreye uyan yatak yok.</td></tr>`;
   }
 
   function renderAll() { renderSummary(); renderOdalar(); renderYataklar(); }
 
   // ── Etkileşim ───────────────────────────────────────────────
+  const toggleGroup = (set, k) => { set.has(k) ? set.delete(k) : set.add(k); };
+  q("yToggleGroups").addEventListener("click", () => {
+    if (!data) return;
+    const all = groups(data.yataklar).map(([k]) => k).concat(groups(data.odalar).map(([k]) => k));
+    const anyOpen = all.some((k) => !closedOda.has(k) || !closedYatak.has(k));
+    for (const k of all) { if (anyOpen) { closedOda.add(k); closedYatak.add(k); } else { closedOda.delete(k); closedYatak.delete(k); } }
+    renderOdalar(); renderYataklar();
+  });
   el.odaBody.addEventListener("click", (e) => {
+    const g = e.target.closest("tr.group");
+    if (g) { toggleGroup(closedOda, g.dataset.g); renderOdalar(); return; }
     const tr_ = e.target.closest("tr[data-id]"); if (!tr_) return;
     selectedOda = tr_.dataset.id === selectedOda ? null : tr_.dataset.id;
     renderOdalar(); renderYataklar();
@@ -377,6 +412,8 @@ export function createYbdb() {
       } catch { toast("Kopyalanamadı"); }
       return;
     }
+    const g = e.target.closest("tr.group");
+    if (g) { toggleGroup(closedYatak, g.dataset.g); renderYataklar(); return; }
     const th = e.target.closest("thead th[data-k]"); if (!th) return;
     sortYatak = sortYatak.key === th.dataset.k ? { key: th.dataset.k, dir: -sortYatak.dir } : { key: th.dataset.k, dir: 1 };
     renderYataklar();

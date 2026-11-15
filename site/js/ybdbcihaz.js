@@ -1,7 +1,7 @@
 // YBDB Odalar → "Cihazlar" sekmesi: dbo.Cihaz'da ekle / güncelle / sil + toplu ekle (yalnızca Id, Adi, CTS, IP, Port, YatakId).
 // Yazma ajandaki CihazRepository'de (WPF ile aynı kod). Düzen WPF ile aynı: solda form, ortada tablo, sağda toplu ekle.
 import { api } from "./api.js";
-import { $, $$, esc, toast, ipFilter, sortCompare, ICONS } from "./util.js";
+import { $, $$, esc, toast, ipFilter, sortCompare, unitColor, ICONS } from "./util.js";
 
 const DASH = "—";
 const COLS = [
@@ -10,6 +10,8 @@ const COLS = [
   { key: "cts", label: "CTS", w: 70 },
   { key: "ip", label: "IP", w: 135, mono: true },
   { key: "port", label: "Port", w: 80, mono: true },
+  { key: "oda", label: "Yoğun bakım", w: 160 },
+  { key: "yatak", label: "Yatak", w: 130 },
   { key: "yatakId", label: "YatakId", w: 85, num: true },
 ];
 
@@ -47,9 +49,9 @@ function attachFilter(input, kind) {
 /** <input list> + <datalist>: listeden seçilir ya da metin kutusu gibi yazılır. */
 function combo(id, label, opts, { mono, filter, title } = {}) {
   const dl = `${id}_dl`;
-  return `<label class="field-label" for="${id}">${esc(label)}</label>
+  return `<div class="cz-field" id="${id}F"><label class="field-label" for="${id}">${esc(label)}</label>
     <input type="text" id="${id}" list="${dl}" autocomplete="off"${mono ? ' class="mono-input"' : ""}${title ? ` title="${esc(title)}"` : ""} style="width:100%">
-    <datalist id="${dl}">${opts.map((o) => `<option value="${esc(o)}">`).join("")}</datalist>`;
+    <datalist id="${dl}">${opts.map((o) => `<option value="${esc(o)}">`).join("")}</datalist></div>`;
 }
 
 /** getYataklar(): YBDB yatak listesi (yatakId → oda / yatak adı). */
@@ -104,20 +106,20 @@ export function createCihazEditor({ getYataklar }) {
         <input type="search" id="czSearch" placeholder="Ara: ad, IP, port, yatak…" style="flex:1;min-width:180px">
         <label class="chk" title="Hastane yazılımının silindi olarak işaretlediği (SilinmeTarihi dolu) satırlar"><input type="checkbox" id="czDeleted"> Silinmiş işaretlileri göster</label>
       </div>
-      <div class="table-wrap cz-table"><table class="fixed" data-cols="ybdb-cihaz" style="min-width:560px">
+      <div class="table-wrap cz-table"><table class="fixed" data-cols="ybdb-cihaz" style="min-width:820px">
         <colgroup>${COLS.map((c) => `<col${c.w ? ` style="width:${c.w}px"` : ""}>`).join("")}</colgroup>
         <thead><tr id="czHead"></tr></thead><tbody id="czBody"></tbody></table></div>
     </section>
 
     <!-- Sağ: toplu ekle -->
-    <section class="card cz-side cz-card">
+    <section class="card cz-side cz-card cz-bulk">
       <div class="card-h">Toplu ekle</div>
       <div class="card-b cz-body">
         <div class="cz-scroll">
         ${combo("bkAdi", "Adi *", ADI_OPTS, { title: "Listeden bir tür seçince IP ve Port kendiliğinden doldurulur" })}
         ${combo("bkIp", "IP", IP_OPTS, { mono: true })}
         ${combo("bkPort", "Port", PORT_OPTS, { mono: true })}
-        <div class="row" style="gap:16px;flex-wrap:nowrap;align-items:flex-start;margin-top:8px">
+        <div class="row cz-bulk-range" style="gap:16px;flex-wrap:nowrap;align-items:flex-start;margin-top:8px">
           <div>
             <label class="field-label">YatakId aralığı *</label>
             <div class="row tight" style="flex-wrap:nowrap">
@@ -161,6 +163,80 @@ export function createCihazEditor({ getYataklar }) {
   function fillYatakList() {
     el.yatakDl.innerHTML = getYataklar().filter((y) => y.yatakId >= 1 && y.yatakId <= 999)
       .map((y) => `<option value="${esc(y.yatakId)}">${esc(y.odaAdi)} · ${esc(y.yatakAdi)}</option>`).join("");
+    buildOdalar();
+  }
+
+  // ── Tablodaki Oda / Yatak açılır listeleri ─────────────────
+  // odalar: [{ key, ad, bolum, yataklar: [{ id, ad }] }] (yatağı olan odalar; YatakId 1–999)
+  let odalar = [], odaByKey = new Map(), odaOfYatak = new Map();
+  const pendingOda = new Map();      // satır Id → oda seçildi, yatak henüz seçilmedi (yazılmadı)
+
+  function buildOdalar() {
+    const m = new Map();
+    for (const y of getYataklar()) {
+      const id = +y.yatakId;
+      if (!(id >= 1 && id <= 999)) continue;
+      const key = String(y.odaId || y.odaAdi);
+      if (!m.has(key)) m.set(key, { key, ad: y.odaAdi || "", bolum: y.bolumAdi || "", renk: y.renk ?? -1, yataklar: [] });
+      if (!m.get(key).yataklar.some((b) => b.id === id)) m.get(key).yataklar.push({ id, ad: y.yatakAdi || String(id) });
+    }
+    const counts = new Map();
+    for (const o of m.values()) counts.set(tr(o.ad), (counts.get(tr(o.ad)) || 0) + 1);
+    odalar = [...m.values()];
+    for (const o of odalar) {
+      if (counts.get(tr(o.ad)) > 1 && o.bolum) o.ad = `${o.ad} (${o.bolum})`;
+      o.yataklar.sort((a, b) => sortCompare(a.ad, b.ad));
+    }
+    odalar.sort((a, b) => sortCompare(a.ad, b.ad));
+    odaByKey = new Map(odalar.map((o) => [o.key, o]));
+    odaOfYatak = new Map(odalar.flatMap((o) => o.yataklar.map((b) => [b.id, o])));
+    pendingOda.clear();
+  }
+
+  /** Satırda görünen oda / yatak (oda değiştirilip yatak seçilmediyse yatak null). */
+  function choice(k) {
+    if (pendingOda.has(k.id)) return { oda: odaByKey.get(pendingOda.get(k.id)) ?? null, yatak: null, pending: true };
+    const oda = k.yatakId != null ? odaOfYatak.get(+k.yatakId) ?? null : null;
+    return { oda, yatak: oda?.yataklar.find((b) => b.id === +k.yatakId) ?? null, pending: false };
+  }
+
+  function odaCell(k, c) {
+    const opts = odalar.map((o) => `<option value="${esc(o.key)}"${c.oda === o ? " selected" : ""}>${esc(o.ad)}</option>`).join("");
+    const uc = c.oda?.renk >= 0 ? ` uc" style="--uc:${unitColor(c.oda.renk)}` : "";
+    return `<td class="cell-sel${uc}"><select class="cell-select${c.oda ? "" : " empty"}" data-act="oda" data-id="${k.id}" title="${esc(c.oda?.bolum ?? "Oda seçin")}"${busy || !odalar.length ? " disabled" : ""}>
+      <option value=""${c.oda ? "" : " selected"}>${DASH}</option>${opts}</select></td>`;
+  }
+
+  function yatakCell(k, c) {
+    if (!c.oda) return `<td class="cell-sel"><select class="cell-select" disabled><option>${DASH}</option></select></td>`;
+    const opts = c.oda.yataklar.map((b) => `<option value="${b.id}"${c.yatak === b ? " selected" : ""}>${esc(b.ad)}</option>`).join("");
+    return `<td class="cell-sel"><select class="cell-select${c.pending ? " pending" : c.yatak ? "" : " none"}" data-act="yatak" data-id="${k.id}" title="Seçilince YatakId hemen veritabanına yazılır"${busy ? " disabled" : ""}>
+      ${c.pending ? `<option value="" selected disabled hidden>Yatak seçin…</option>` : ""}<option value="none">— Yatak yok —</option>${opts}</select></td>`;
+  }
+
+  /** Satırda yatak seçildi: YatakId hemen yazılır (satır okunduğu haliyle değilse ajan yazmaz). */
+  async function chooseYatak(k, yatakId) {
+    if (busy || yatakId === (k.yatakId ?? null)) { pendingOda.delete(k.id); render(); return; }
+    if (selected?.original?.id === k.id && isDirty()) {
+      alert(`Cihaz ${k.id} formda açık ve kaydedilmemiş değişiklikleri var. Önce formu kaydedin ya da vazgeçin.`);
+      pendingOda.delete(k.id); render(); return;
+    }
+    const original = { ...k };
+    const changed = { id: k.id, adi: k.adi ?? null, cts: k.cts ?? null, ip: k.ip ?? null, port: k.port ?? null, yatakId };
+    setBusy(true);
+    try {
+      await api("/api/ybdb/cihaz", { method: "POST", body: { original, changed } });
+    } catch (e) {
+      toast(e.message, 6000); pendingOda.delete(k.id);
+      setBusy(false); await load(selected?.original?.id); return;
+    }
+    setBusy(false);
+    // Yerinde güncelle (liste yeniden okunmaz: kaydırma konumu korunur)
+    k.yatakId = yatakId; pendingOda.delete(k.id);
+    const c = choice(k);
+    toast(`Cihaz ${k.id}: ${c.oda ? `${c.oda.ad} · ${c.yatak?.ad}` : "yatak bağlantısı kaldırıldı"}`);
+    if (selected?.original?.id === k.id) select(k, true); else render();
+    updateBulkPreview();
   }
 
   async function load(keepId) {
@@ -180,6 +256,7 @@ export function createCihazEditor({ getYataklar }) {
   function setBusy(b) {
     busy = b;
     [el.reload, el.add, el.save, el.cancel, el.del, el.bkAdd, ...formInputs].forEach((x) => (x.disabled = b));
+    el.body.querySelectorAll("select[data-act]").forEach((s) => (s.disabled = b));
     if (!b) updateButtons();
   }
 
@@ -189,13 +266,14 @@ export function createCihazEditor({ getYataklar }) {
     let v = list.filter((k) => (showDeleted || !k.silinmis) &&
       (!s || [k.id, k.adi, k.cts, k.ip, k.port, k.yatakId, ym.get(String(k.yatakId))?.yatakAdi, ym.get(String(k.yatakId))?.odaAdi].some((x) => tr(x).includes(s))));
     const c = COLS.find((x) => x.key === sort.key);
-    if (c) v = [...v].sort((a, b) => sortCompare(a[c.key], b[c.key], sort.dir) || a.id - b.id);
+    const val = (k) => c.key === "oda" ? choice(k).oda?.ad : c.key === "yatak" ? choice(k).yatak?.ad : k[c.key];
+    if (c) v = [...v].sort((a, b) => sortCompare(val(a), val(b), sort.dir) || a.id - b.id);
     return v;
   }
 
   function render() {
     el.head.innerHTML = COLS.map((c) => `<th data-k="${c.key}">${c.label}${sort.key === c.key ? `<span class="arr">${sort.dir > 0 ? "▲" : "▼"}</span>` : ""}</th>`).join("");
-    if (!loaded) { el.body.innerHTML = `<tr><td colspan="6" class="empty">Bağlandıktan sonra listelenir.</td></tr>`; el.count.textContent = "Bağlandıktan sonra listelenir"; return; }
+    if (!loaded) { el.body.innerHTML = `<tr><td colspan="${COLS.length}" class="empty">Bağlandıktan sonra listelenir.</td></tr>`; el.count.textContent = "Bağlandıktan sonra listelenir"; return; }
     const v = visible(), ym = yatakMap(), del = list.filter((k) => k.silinmis).length;
     el.count.textContent = `${v.length} / ${list.length}${del && !showDeleted ? ` (${del} silinmiş işaretli gizli)` : ""}`;
     el.body.innerHTML = v.length ? v.map((k) => {
@@ -205,8 +283,9 @@ export function createCihazEditor({ getYataklar }) {
           title="${k.silinmis ? "Hastane yazılımı bu satırı silindi olarak işaretlemiş" : ""}">
         <td class="mono">${k.id}</td><td title="${esc(k.adi)}">${esc(k.adi) || DASH}</td><td title="${esc(k.cts)}">${esc(k.cts) || DASH}</td>
         <td class="mono">${esc(k.ip) || DASH}</td><td class="mono">${esc(k.port) || DASH}</td>
+        ${odaCell(k, choice(k))}${yatakCell(k, choice(k))}
         <td class="mono${k.yatakId != null && !y && getYataklar().length ? " txt-error" : ""}" title="${esc(yTip)}">${k.yatakId ?? DASH}</td></tr>`;
-    }).join("") : `<tr><td colspan="6" class="empty">${list.length ? "Aramaya uyan cihaz yok." : "Cihaz tablosu boş."}</td></tr>`;
+    }).join("") : `<tr><td colspan="${COLS.length}" class="empty">${list.length ? "Aramaya uyan cihaz yok." : "Cihaz tablosu boş."}</td></tr>`;
   }
 
   el.head.addEventListener("click", (e) => {
@@ -215,9 +294,23 @@ export function createCihazEditor({ getYataklar }) {
     render();
   });
   el.body.addEventListener("click", (e) => {
+    if (e.target.closest("select")) return;          // oda / yatak listesi: satırı forma açma
     const trEl = e.target.closest("tr[data-id]"); if (!trEl || busy) return;
     const k = list.find((x) => x.id === +trEl.dataset.id);
     if (k && confirmDiscard()) select(k);
+  });
+  el.body.addEventListener("change", (e) => {
+    const s = e.target.closest("select[data-act]"); if (!s) return;
+    const k = list.find((x) => x.id === +s.dataset.id); if (!k) return;
+    if (s.dataset.act === "oda") {
+      // Oda değişti: yatak listesi o odanınkine döner; yatak seçilene kadar hiçbir şey yazılmaz
+      const cur = choice(k);
+      if (!s.value) { pendingOda.delete(k.id); if (k.yatakId != null && cur.oda) pendingOda.set(k.id, ""); }
+      else if (s.value === cur.oda?.key && !cur.pending) pendingOda.delete(k.id);
+      else pendingOda.set(k.id, s.value);
+      render();
+      if (s.value) el.body.querySelector(`select[data-act="yatak"][data-id="${k.id}"]`)?.focus();
+    } else if (s.value) chooseYatak(k, s.value === "none" ? null : +s.value);
   });
   el.search.addEventListener("input", () => { search = el.search.value; render(); });
   el.deleted.addEventListener("change", () => { showDeleted = el.deleted.checked; render(); });

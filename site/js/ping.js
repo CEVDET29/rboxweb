@@ -111,6 +111,7 @@ export function createPing(ctx) {
         <span class="row tight"><input type="text" id="pNewIp" class="mono-input" placeholder="IP adresi" style="width:150px" autocomplete="off"
           title="Listede olmayan bir cihazı ekleyin: IP yazıp Enter ya da + (Oda belirtilmemiş grubuna eklenir)">
         <button class="btn ib" id="pAddIp" title="Ekle · IP'yi listeye ekle">${ICONS.plus}</button></span>
+        <button class="btn ib" id="pToggleRooms" title="Tüm odaları daralt / genişlet">${ICONS.chevrons}</button>
         <input type="search" id="pSearch" placeholder="Ara: oda, yatak, IP, MAC…  (Ctrl+F)" style="width:340px;max-width:100%">
         <span class="sm muted" id="pCount"></span>
         <span class="spacer" style="flex:1"></span>
@@ -221,6 +222,12 @@ export function createPing(ctx) {
     el.status.textContent = `${ip} eklendi`;
   }
   q("pAddIp").addEventListener("click", addIp);
+  // Tüm odaları daralt / genişlet: açık oda varsa hepsi kapanır, yoksa hepsi açılır (WPF 1.55)
+  q("pToggleRooms").addEventListener("click", () => {
+    const anyOpen = rooms.some((r) => !r.collapsed);
+    rooms.forEach((r) => { r.collapsed = anyOpen; });
+    render();
+  });
   newIp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addIp(); } });
 
   function removeRow(r) {

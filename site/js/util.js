@@ -194,6 +194,8 @@ export const ICONS = {
   stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
   redo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
+  checkAll: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="14" height="14" rx="2.5"/><path d="M3 15V5.5A2.5 2.5 0 0 1 5.5 3H15"/><path d="M10.5 14l2.5 2.5 4.5-5"/></svg>',
+  checkNone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   term: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>',
   globe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
@@ -204,6 +206,13 @@ export const ICONS = {
   folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   xmark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>',
   warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5L2.5 20h19z"/><path d="M12 10v4.5M12 17.3v.2"/></svg>',
+  list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8.5 6h12M8.5 12h12M8.5 18h12"/><path d="M3.8 6h.4M3.8 12h.4M3.8 18h.4" stroke-width="2.8"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/><path d="M4 20L20 4"/></svg>',
+  screen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="19" height="14" rx="2"/><path d="M6.5 8l2.5 2.5-2.5 2.5M11.5 13h4M8 21h8"/></svg>',
+  timer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4.5h-4.5"/><path d="M12 8v4l2.5 2"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+  eraser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H8.5L4 15.5a2 2 0 0 1 0-2.8L13.2 3.5a2 2 0 0 1 2.8 0l4.5 4.5a2 2 0 0 1 0 2.8L11 20"/><path d="M9 9l6.5 6.5"/></svg>',
+  user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>',
 };
 
 // ── Sütun genişliği (WPF DataGrid gibi) ─────────────────────────────
@@ -273,6 +282,42 @@ function fitWidth(table, idx) {
   return Math.min(Math.max(COL_MIN, Math.ceil(w) + 4), 900);
 }
 
+const FLEX_MIN = 60;
+
+/**
+ * İtmeli sütun boyutlandırma (WPF 1.62.0 GridColumns): sürüklenen, b ile b+1 sütunları arasındaki çizgidir.
+ *  • sola (dx < 0): sağdaki sütun genişler; yer önce soldaki dolduran sütundan, sonra çizgiye en yakın sütundan
+ *    başlayarak (b, b-1 …) alınır; her sütun en küçük genişliğinde durur, kaybolmaz.
+ *  • sağa (dx > 0): soldaki sütun genişler; yer önce sağdaki dolduran sütundan, sonra çizgiye en yakın sütunlardan
+ *    alınır; yer kalmazsa tablo genişler (yatay kayar).
+ * Son sütunun sağ kenarı yalnız o sütunu boyutlandırır. Hep sürüklemenin başındaki genişliklerden (S) hesaplanır.
+ */
+function pushWidths(S, mins, b, dx, flex) {
+  const w = S.map(Math.round), n = w.length;
+  dx = Math.round(dx);
+  if (b >= n - 1) { w[b] = Math.max(mins[b], w[b] + dx); return w; }
+  const take = (order, need) => {
+    let got = 0;
+    for (const i of order) {
+      if (got >= need) break;
+      const c = Math.min(need - got, Math.max(0, w[i] - mins[i]));
+      w[i] -= c; got += c;
+    }
+    return got;
+  };
+  if (dx < 0) {
+    const order = flex >= 0 && flex <= b ? [flex] : [];
+    for (let i = b; i >= 0; i--) if (i !== flex) order.push(i);
+    w[b + 1] += take(order, -dx);
+  } else if (dx > 0) {
+    const order = flex > b ? [flex] : [];
+    for (let i = b + 1; i < n; i++) if (i !== flex) order.push(i);
+    take(order, dx);
+    w[b] += dx;
+  }
+  return w;
+}
+
 let colResizeOn = false;
 /** Sütun genişliği ayarını tüm sayfada etkinleştirir (bir kez, app.js çağırır). */
 export function installColumnResize() {
@@ -306,7 +351,9 @@ export function installColumnResize() {
     const ci = colInfo(table);
     // Sürüklemenin başında her sütunun görünen genişliği (dolduran sütun kalan yeri kaplıyor olabilir)
     const shown = [...table.tHead.rows[0].cells].map((c) => c.getBoundingClientRect().width);
-    const start = e.clientX, w0 = shown[idx] ?? ci.w[idx];
+    if (shown.length !== ci.w.length) return;
+    const mins = shown.map((_, i) => (i === ci.flex ? FLEX_MIN : COL_MIN));
+    const start = e.clientX;
     let moved = false;
     document.body.classList.add("col-resizing");
     // Kenarda basılınca gelen "click" (sürükleme ya da çift tıklama) sıralama yapmasın
@@ -316,8 +363,10 @@ export function installColumnResize() {
       const dx = ev.clientX - start;
       if (!moved && Math.abs(dx) < 2) return;
       moved = true;
-      const w = [...ci.w];
-      w[idx] = Math.max(COL_MIN, Math.round(w0 + dx));
+      const w = pushWidths(shown, mins, idx, dx, ci.flex);
+      // Dolduran sütunun kayıtlı değeri en küçük genişliğidir: varsayılandan büyük kaydedilmesin ki pencere
+      // daralınca tablo gereksiz yere yatay kaymasın (geniş pencerede yine kalan yeri doldurur)
+      if (ci.flex >= 0) w[ci.flex] = Math.max(mins[ci.flex], Math.min(w[ci.flex], ci.flexMin));
       applyCols(table, w);
     };
     const up = () => {
@@ -348,17 +397,25 @@ export function installColumnResize() {
  * İki sütunlu ızgaranın arasına sürüklenebilir ayraç koyar (WPF ColumnSplitter gibi): sol sütunun genişliği
  * sürükleyerek değişir, çift tıklayınca varsayılana döner, tarayıcıda hatırlanır (storeKey). Izgara tek sütuna
  * indiğinde (dar ekran, CSS) ayraç gizlenir. Izgaraya "split" sınıfı eklenir; genişlik --split-left değişkeninde.
+ * side: "right" ile sağdaki sütun boyutlanır (--split-right; minRight o zaman soldaki sütunun en küçüğüdür).
+ * min / max sayı ya da her sürüklemede okunan işlev olabilir (ör. ölçülen en küçük genişlik, ızgaranın %65'i).
+ * Sağ tarafta CSS'teki --split-min değişkeni (verilmişse) kayıtlı genişliğin de altına inilmesini engeller.
  */
-export function columnSplitter(grid, storeKey, { min = 260, minRight = 360 } = {}) {
+export function columnSplitter(grid, storeKey, { min = 260, minRight = 360, max = Infinity, side = "left" } = {}) {
+  const right = side === "right";
+  const varName = right ? "--split-right" : "--split-left";
+  const val = (v) => (typeof v === "function" ? v() : v);
   grid.classList.add("split");
   const handle = document.createElement("div");
   handle.className = "vsplit";
   handle.title = "Sürükleyerek genişliği ayarlayın · çift tıklayınca varsayılan";
   grid.firstElementChild.after(handle);
+  const pane = () => (right ? grid.lastElementChild : grid.firstElementChild);
   const apply = (px) => {
-    if (px == null) grid.style.removeProperty("--split-left");
-    // Pencere daralırsa sağ sütun en az minRight kalsın
-    else grid.style.setProperty("--split-left", `min(${Math.round(px)}px, calc(100% - ${minRight + 16}px))`);
+    if (px == null) { grid.style.removeProperty(varName); return; }
+    // Pencere daralırsa öbür sütun en az minRight kalsın
+    const v = `min(${Math.round(px)}px, calc(100% - ${minRight + 16}px))`;
+    grid.style.setProperty(varName, right ? `max(var(--split-min, 0px), ${v})` : v);
   };
   const saved = Number(storeGet(storeKey));
   if (saved > 0) apply(saved);
@@ -367,14 +424,18 @@ export function columnSplitter(grid, storeKey, { min = 260, minRight = 360 } = {
     e.preventDefault();
     try { handle.setPointerCapture(e.pointerId); } catch { /* etkin işaretçi yok */ }
     handle.classList.add("drag");
-    const left = grid.firstElementChild, start = e.clientX, w0 = left.getBoundingClientRect().width;
+    const start = e.clientX, w0 = pane().getBoundingClientRect().width;
     const total = grid.getBoundingClientRect().width;
-    const move = (ev) => apply(Math.min(Math.max(min, w0 + ev.clientX - start), total - minRight - handle.offsetWidth));
+    const hi = Math.min(val(max), total - minRight - handle.offsetWidth), lo = val(min);
+    const move = (ev) => {
+      const dx = ev.clientX - start;
+      apply(Math.max(lo, Math.min(w0 + (right ? -dx : dx), hi)));
+    };
     const up = () => {
       handle.classList.remove("drag");
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", up);
-      storeSet(storeKey, String(Math.round(left.getBoundingClientRect().width)));
+      storeSet(storeKey, String(Math.round(pane().getBoundingClientRect().width)));
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", up);

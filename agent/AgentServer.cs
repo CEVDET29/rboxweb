@@ -90,6 +90,7 @@ namespace RboxAgent
                     res.Headers["Vary"] = "Origin";
                     res.Headers["Access-Control-Allow-Headers"] = "Content-Type, X-Rbox-Token, X-File-Name";
                     res.Headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS";
+                    res.Headers["Access-Control-Expose-Headers"] = "X-File-Name";
                     res.Headers["Access-Control-Allow-Private-Network"] = "true";
                     res.Headers["Access-Control-Max-Age"] = "600";
                 }
@@ -479,6 +480,113 @@ namespace RboxAgent
                     return;
                 }
 
+                // TTY ekranı: okuma / tuş gönderme / kapatma (cihaz başına açık tutulan SSH; 30 sn boşta kalınca kapanır)
+                case ("POST", "/api/control/tty/read"):
+                case ("POST", "/api/control/tty/send"):
+                case ("POST", "/api/control/tty/close"):
+                {
+                    CtlTtyRequest? t;
+                    try { t = await Body<CtlTtyRequest>(req); }
+                    catch { await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+                    if (t == null || !ControlService.IsValidIp(t.Ip) || t.Tty is < 1 or > 12)
+                    { await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+                    if (path.EndsWith("/close")) { ControlService.TtyClose(t.Ip); await Reply(res, new { ok = true }); return; }
+                    if (UpdateService.Credentials() == null) { await Reply(res, new { error = "SSH kullanıcı adı ve şifre girin (üst banttaki SSH düğmesi)." }, 422); return; }
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+                    try
+                    {
+                        if (path.EndsWith("/read")) await Reply(res, await ControlService.TtyReadAsync(t, cts.Token));
+                        else { await ControlService.TtySendAsync(t, cts.Token); await Reply(res, new { ok = true }); }
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or FormatException)
+                    { await Reply(res, new { error = ex.Message }, 422); }
+                    catch (OperationCanceledException) { await Reply(res, new { error = "Zaman aşımı." }, 504); }
+                    return;
+                }
+
+                // TTY dosya paneli (SFTP; yetki yetmezse sudo). Cihaz başına tek bağlantı, 2 dk boşta kalınca kapanır.
+                case ("POST", "/api/control/files/list"):
+                case ("POST", "/api/control/files/stat"):
+                case ("POST", "/api/control/files/mkdir"):
+                case ("POST", "/api/control/files/rename"):
+                case ("POST", "/api/control/files/delete"):
+                case ("POST", "/api/control/files/exists"):
+                case ("POST", "/api/control/files/upload-work"):
+                case ("POST", "/api/control/files/close"):
+                {
+                    RfRequest? f;
+                    try { f = await Body<RfRequest>(req); }
+                    catch { await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+                    if (f == null || !ControlService.IsValidIp(f.Ip)) { await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+                    if (path.EndsWith("/close")) { RemoteFilesService.Close(f.Ip); await Reply(res, new { ok = true }); return; }
+                    if (UpdateService.Credentials() == null) { await Reply(res, new { error = "SSH kullanıcı adı ve şifre girin (üst banttaki SSH düğmesi)." }, 422); return; }
+                    using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(path.EndsWith("/upload-work") ? 10 : 1));
+                    try
+                    {
+                        object result = path[(path.LastIndexOf('/') + 1)..] switch
+                        {
+                            "list" => await RemoteFilesService.ListAsync(f, cts.Token),
+                            "stat" => await RemoteFilesService.StatAsync(f, cts.Token),
+                            "exists" => await RemoteFilesService.ExistingAsync(f, cts.Token),
+                            "mkdir" => await Done(RemoteFilesService.MkdirAsync(f, cts.Token)),
+                            "rename" => await Done(RemoteFilesService.RenameAsync(f, cts.Token)),
+                            "delete" => await Done(RemoteFilesService.DeleteAsync(f, cts.Token)),
+                            _ => await Done(RemoteFilesService.UploadFromWorkAsync(f, cts.Token)),
+                        };
+                        await Reply(res, result);
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+                    { await Reply(res, new { error = ex.Message }, 422); }
+                    catch (OperationCanceledException) { await Reply(res, new { error = "Zaman aşımı." }, 504); }
+                    return;
+                }
+
+                case ("POST", "/api/control/files/upload"):
+                {
+                    string ip = req.QueryString["ip"] ?? "";
+                    if (!ControlService.IsValidIp(ip)) { await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+                    if (UpdateService.Credentials() == null) { await Reply(res, new { error = "SSH kullanıcı adı ve şifre girin (üst banttaki SSH düğmesi)." }, 422); return; }
+                    using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+                    try
+                    {
+                        await RemoteFilesService.UploadAsync(ip, req.QueryString["dir"], req.QueryString["name"], req.InputStream, cts.Token);
+                        await Reply(res, new { ok = true });
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or IOException)
+                    { await Reply(res, new { error = ex.Message }, 422); }
+                    catch (OperationCanceledException) { await Reply(res, new { error = "Zaman aşımı." }, 504); }
+                    return;
+                }
+
+                // İndirme: items = [{path, dir}] (JSON, adres satırında). Tek dosya olduğu gibi, diğerleri zip.
+                case ("GET", "/api/control/files/download"):
+                {
+                    string ip = req.QueryString["ip"] ?? "";
+                    List<RfItem>? items;
+                    try { items = JsonSerializer.Deserialize<List<RfItem>>(req.QueryString["items"] ?? "[]", new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+                    catch { items = null; }
+                    if (!ControlService.IsValidIp(ip) || items == null) { await Reply(res, new { error = "Geçersiz istek." }, 400); return; }
+                    if (UpdateService.Credentials() == null) { await Reply(res, new { error = "SSH kullanıcı adı ve şifre girin (üst banttaki SSH düğmesi)." }, 422); return; }
+                    using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+                    (string file, string name, string temp) dl;
+                    try { dl = await RemoteFilesService.DownloadAsync(ip, items, cts.Token); }
+                    catch (Exception ex) when (ex is InvalidOperationException or ArgumentException or IOException)
+                    { await Reply(res, new { error = ex.Message }, 422); return; }
+                    catch (OperationCanceledException) { await Reply(res, new { error = "Zaman aşımı." }, 504); return; }
+                    try
+                    {
+                        await using var fs = new FileStream(dl.file, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        res.StatusCode = 200;
+                        res.ContentType = "application/octet-stream";
+                        res.AddHeader("X-File-Name", Uri.EscapeDataString(dl.name));
+                        res.ContentLength64 = fs.Length;
+                        await fs.CopyToAsync(res.OutputStream);
+                        res.Close();
+                    }
+                    finally { RemoteFilesService.TryDelete(dl.temp); }
+                    return;
+                }
+
                 case ("POST", "/api/control/refresh"):
                 case ("POST", "/api/control/exec"):
                 {
@@ -779,6 +887,9 @@ namespace RboxAgent
             var v = await JsonSerializer.DeserializeAsync<T>(req.InputStream, Json);
             return v ?? new T();
         }
+
+        /// <summary>Sonuç döndürmeyen işlem bitince {ok:true}.</summary>
+        private static async Task<object> Done(Task t) { await t; return new { ok = true }; }
 
         private static async Task Reply(HttpListenerResponse res, object body, int status = 200)
         {

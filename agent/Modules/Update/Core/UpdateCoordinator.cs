@@ -28,6 +28,18 @@ namespace RboxAgent.Modules.Update.Core
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    //  ServiceAction  —  swtui / web servisine toplu işlem (v5.3)
+    // ─────────────────────────────────────────────────────────────────────────
+    public enum ServiceAction
+    {
+        None,    // Dokunma — adım çalışmaz
+        Enable,  // açılışta başlasın + hemen başlat
+        Disable, // açılışta başlamasın + hemen durdur
+        Start,   // yalnız şimdi başlat (açılış ayarına dokunmaz)
+        Stop     // yalnız şimdi durdur (açılış ayarına dokunmaz)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     //  ConspyAction  —  conspy kurulum yöntemi (v4.6)
     // ─────────────────────────────────────────────────────────────────────────
     public enum ConspyAction
@@ -103,6 +115,10 @@ namespace RboxAgent.Modules.Update.Core
 
         // conspy kurulum yöntemi: kurma / apt-get / çevrimdışı .deb (v4.6)
         public ConspyAction Conspy { get; set; } = ConspyAction.None;
+
+        // swtui.service / rasyobox-web.service toplu enable / disable / başlat / durdur (v5.3)
+        public ServiceAction SwtuiService { get; set; } = ServiceAction.None;
+        public ServiceAction WebService { get; set; } = ServiceAction.None;
 
         /// <summary>
         /// v4.2: Paralel güncellemede her cihaz kendi kopyasını kullanır.
@@ -950,6 +966,85 @@ namespace RboxAgent.Modules.Update.Core
     /// <item>Perl bozuksa bozuk dosyalar (<c>dpkg --verify perl-base</c>) ayrıca uyarı olarak loglanır.</item>
     /// </list>
     /// </summary>
+    /// <summary>
+    /// v5.3 — swtui / RasyoBOX web servisine toplu işlem (Cihaz Kontrol'deki TUI / WEB kareleriyle aynı birimler).
+    /// Enable: açılışta + hemen başlat; Disable: açılışta kapalı + hemen durdur; Başlat / Durdur: yalnız şimdi.
+    /// Birim cihazda yoksa uyarıyla atlanır (zinciri kırmaz). Başarı gerçek duruma (is-enabled / is-active) göre belirlenir.
+    /// </summary>
+    internal sealed class UnitServiceStep(string name, string unit, Func<UpdateOptions, ServiceAction> select) : IUpdateStep
+    {
+        public bool ShouldRun(UpdateOptions o) => select(o) != ServiceAction.None;
+
+        public async Task<bool> RunAsync(StepContext x)
+        {
+            var act = select(x.Opt);
+            string label = act switch
+            {
+                ServiceAction.Enable => "enable", ServiceAction.Disable => "disable",
+                ServiceAction.Start => "başlatma", _ => "durdurma"
+            };
+
+            var (_, has, _) = await x.Updater.ExecuteSudoGetOutputAsync(x.Client,
+                $"systemctl cat {unit} >/dev/null 2>&1 && echo VAR || echo YOK", x.Ip, x.Ct, 15);
+            if (!(has ?? "").Contains("VAR", StringComparison.Ordinal))
+            {
+                await x.Logger.LogAsync(x.Ip, $"{name} ({unit}) cihazda kurulu değil, {label} atlandı.", StatusKind.Warn);
+                return true;
+            }
+
+            bool bootOk = true; string bootMsg = "";
+            if (act is ServiceAction.Enable or ServiceAction.Disable)
+                (bootOk, bootMsg) = await x.Updater.ExecuteSudoChainAsync(x.Client, new[]
+                {
+                    act == ServiceAction.Enable ? $"systemctl unmask {unit} 2>/dev/null; systemctl enable {unit}" : $"systemctl disable {unit}"
+                }, x.Ip, x.Ct);
+
+            bool start = act is ServiceAction.Enable or ServiceAction.Start;
+            var (nowOk, nowMsg) = await x.Updater.ExecuteSudoChainAsync(x.Client, new[]
+            {
+                $"systemctl {(start ? "start" : "stop")} {unit}"
+            }, x.Ip, x.Ct);
+
+            var (_, stateOut, _) = await x.Updater.ExecuteSudoGetOutputAsync(x.Client,
+                $"echo \"is-enabled: $(systemctl is-enabled {unit} 2>&1); is-active: $(systemctl is-active {unit} 2>&1)\"",
+                x.Ip, x.Ct, 10);
+            var m = Regex.Match(stateOut ?? "", @"is-enabled:\s*(\S+);\s*is-active:\s*(\S+)");
+            string en = m.Success ? m.Groups[1].Value : "", ac = m.Success ? m.Groups[2].Value : "";
+            bool active = ac == "active";
+            bool reached = act switch
+            {
+                ServiceAction.Enable => en == "enabled" && active,
+                ServiceAction.Disable => en is "disabled" or "masked" && !active,
+                ServiceAction.Start => active,
+                _ => !active
+            };
+
+            string state = string.IsNullOrWhiteSpace(stateOut) ? "" : $" [{stateOut.Trim()}]";
+            if (reached)
+            {
+                string done = act switch
+                {
+                    ServiceAction.Enable => "enable edildi (açılışta başlar, çalışıyor)",
+                    ServiceAction.Disable => "disable edildi (açılışta başlamaz, durduruldu)",
+                    ServiceAction.Start => "başlatıldı",
+                    _ => "durduruldu"
+                };
+                await x.Logger.LogAsync(x.Ip, $"{name} {done}.{state}", StatusKind.Success);
+                return true;
+            }
+
+            string why = !bootOk ? $"açılış ayarı: {Short(bootMsg)}" : !nowOk ? $"{(start ? "başlatma" : "durdurma")}: {Short(nowMsg)}" : "durum beklenen gibi değil";
+            await x.Logger.LogAsync(x.Ip, $"{name} {label} yapılamadı — {why}{state}", StatusKind.Error);
+            return false;
+        }
+
+        private static string Short(string? s)
+        {
+            s = (s ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+            return s.Length > 160 ? s[..160] + "…" : s;
+        }
+    }
+
     internal sealed class CronServiceStep : IUpdateStep
     {
         private const string Unit = "cron.service";
@@ -1417,6 +1512,8 @@ namespace RboxAgent.Modules.Update.Core
     /// sudo şifresi SUDO_ASKPASS ile verilerek çalıştırılır (<see cref="SshUpdater.ExecuteAsUserWithSudoAsync"/>).</para>
     /// <para>İş bitince arşiv ve açılan klasör cihazdan silinir. Sunucu IP ve Yatak ID cihazda swtui ekranında
     /// (A tuşu) girilir. Hata durumunda zincir kırılmaz.</para>
+    /// <para>v1.54: swtui arka planda tmux içinde çalışır. Cihazda tmux yoksa önce updateFiles\tmux\*.deb paketlerinden
+    /// çevrimdışı kurulur; kurulumdan sonra <c>swtui --durum</c> ile arka planda çalıştığı doğrulanır.</para>
     /// </summary>
     internal sealed class SwtuiStep : IUpdateStep
     {
@@ -1439,6 +1536,9 @@ namespace RboxAgent.Modules.Update.Core
                     StatusKind.Error);
                 return true; // zincir kırılmaz
             }
+
+            // swtui arka planda tmux içinde çalışır; tmux yoksa önce çevrimdışı kurulur (v1.54).
+            bool tmuxOk = await EnsureTmuxAsync(x);
 
             string name = Path.GetFileName(rel);
             string remote = "/tmp/" + name;
@@ -1473,9 +1573,25 @@ namespace RboxAgent.Modules.Update.Core
 
             if (rc == 0 && output.Contains("KURULUM BİTTİ", StringComparison.Ordinal))
             {
-                await x.Logger.LogAsync(x.Ip,
-                    $"swtui kuruldu ({name}). Sunucu IP ve Yatak ID'yi cihazda swtui ekranında A tuşuyla girin.",
-                    StatusKind.Success);
+                // Kurulum bitti demek arka planda çalıştığı anlamına gelmez (tmux yoksa servis kurulmaz).
+                var (drc, dout, _) = await x.Updater.ExecuteAsUserWithSudoAsync(
+                    x.Client, "/usr/local/bin/swtui --durum 2>&1\n", x.Ip, x.Ct, 30);
+                string durum = string.Join(", ", (dout ?? "").Replace("\r\n", "\n").Split('\n')
+                    .Select(l => l.Trim()).Where(l => l.Length > 0));
+                if (drc == 0)
+                {
+                    await x.Logger.LogAsync(x.Ip,
+                        $"swtui kuruldu ({name}), arka planda çalışıyor. Sunucu IP ve Yatak ID'yi cihazda swtui ekranında A tuşuyla girin.",
+                        StatusKind.Success);
+                }
+                else
+                {
+                    string neden = tmuxOk ? "" : " tmux kurulamadığı için";
+                    await x.Logger.LogAsync(x.Ip,
+                        $"swtui kuruldu ({name}) ama{neden} arka planda çalışmıyor [{durum}]. " +
+                        "swtui yazınca yine açılır; Pi açılışında kendiliğinden başlamaz.",
+                        StatusKind.Warn);
+                }
                 return true;
             }
 
@@ -1485,6 +1601,104 @@ namespace RboxAgent.Modules.Update.Core
                 : $"swtui kurulamadı (çıkış kodu {rc}). {detail}";
             await x.Logger.LogAsync(x.Ip, msg, StatusKind.Error);
             return true; // hata olsa da zincir devam eder
+        }
+
+        // ── tmux (v1.54) ──────────────────────────────────────────────────────
+        // Kaynak: updateFiles\tmux\*.deb (internetli bir Pi'de: apt-get download tmux libevent-core-2.1-7 libutempter0).
+        private const string TmuxFolder = "tmux";
+        private static readonly Regex SafeDebName = new(@"^[A-Za-z0-9._+~-]+\.deb$", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Cihazda tmux yoksa updateFiles\tmux içindeki .deb paketlerinden çevrimdışı kurar.
+        /// Yalnızca cihazda kurulu olmayan paketler kurulur (kurulu kütüphaneler eski sürüme düşmez).
+        /// Dönen değer: işlem sonunda tmux cihazda var mı. Hiçbir durumda zinciri kırmaz.
+        /// </summary>
+        private static async Task<bool> EnsureTmuxAsync(StepContext x)
+        {
+            try
+            {
+                var (crc, cout, _) = await x.Updater.ExecuteAsUserWithSudoAsync(
+                    x.Client, "command -v tmux >/dev/null 2>&1 && tmux -V\n", x.Ip, x.Ct, 15);
+                if (crc == 0)
+                {
+                    await x.Logger.LogAsync(x.Ip, $"tmux zaten kurulu ({cout.Trim()}).");
+                    return true;
+                }
+
+                string dir = x.LocalPath(TmuxFolder);
+                var debs = Directory.Exists(dir)
+                    ? Directory.GetFiles(dir, "*.deb").Select(Path.GetFileName).OfType<string>()
+                               .Where(n => SafeDebName.IsMatch(n)).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList()
+                    : new List<string>();
+                if (debs.Count == 0)
+                {
+                    await x.Logger.LogAsync(x.Ip,
+                        @"tmux cihazda yok ve updateFiles\tmux klasöründe .deb paketi bulunamadı — swtui arka planda çalışamaz.",
+                        StatusKind.Warn);
+                    return false;
+                }
+
+                await x.Logger.LogAsync(x.Ip, $"tmux cihazda yok, çevrimdışı kuruluyor ({string.Join(", ", debs)})...");
+
+                var remotes = new List<string>();
+                foreach (string deb in debs)
+                {
+                    string remote = "/tmp/rbx-" + deb;
+                    bool ok = await x.Updater.CopyFileWithSudoAsync(
+                        x.Client, Path.Combine(TmuxFolder, deb), remote, $"chmod 0644 '{remote}'",
+                        x.Ip, x.Ct, unixifyBeforeUpload: false);
+                    if (!ok)
+                    {
+                        await x.Logger.LogAsync(x.Ip, $"{deb} cihaza kopyalanamadı — tmux kurulmadı.", StatusKind.Error);
+                        if (remotes.Count > 0)
+                            await x.Updater.ExecuteAsUserWithSudoAsync(x.Client,
+                                "rm -f " + string.Join(" ", remotes.Select(r => $"'{r}'")) + "\n", x.Ip, x.Ct, 15);
+                        return false;
+                    }
+                    remotes.Add(remote);
+                }
+
+                string files = string.Join(" ", remotes.Select(r => $"'{r}'"));
+                // Kurulu paketleri atla; dpkg kilitliyse (apt-daily vb.) 5 sn arayla en fazla 2 dk yeniden dene.
+                string script =
+                    "set --\n" +
+                    $"for f in {files}; do\n" +
+                    "  p=$(dpkg-deb -f \"$f\" Package 2>/dev/null) || { echo \"HATA: $f okunamadı\"; continue; }\n" +
+                    "  if dpkg-query -W -f='${Status}' \"$p\" 2>/dev/null | grep -q 'ok installed'; then echo \"ATLANDI: $p zaten kurulu\"; continue; fi\n" +
+                    "  set -- \"$@\" \"$f\"\n" +
+                    "done\n" +
+                    "rc=0\n" +
+                    "if [ $# -gt 0 ]; then\n" +
+                    "  for i in $(seq 1 24); do out=$(sudo dpkg -i \"$@\" 2>&1); rc=$?; case \"$out\" in *locked*) sleep 5;; *) break;; esac; done\n" +
+                    "  echo \"$out\"\n" +
+                    "fi\n" +
+                    $"rm -f {files}\n" +
+                    "if command -v tmux >/dev/null 2>&1 && tmux -V >/dev/null 2>&1; then echo \"TMUX: $(tmux -V)\"; exit 0; fi\n" +
+                    "[ $rc -ne 0 ] && exit $rc; exit 3\n";
+
+                var (rc, so, se) = await x.Updater.ExecuteAsUserWithSudoAsync(x.Client, script, x.Ip, x.Ct, 180);
+                string output = ((so ?? "") + "\n" + (se ?? "")).Trim();
+                string? tmuxLine = output.Replace("\r\n", "\n").Split('\n').Select(l => l.Trim())
+                    .LastOrDefault(l => l.StartsWith("TMUX:", StringComparison.Ordinal));
+
+                if (rc == 0 && tmuxLine != null)
+                {
+                    await x.Logger.LogAsync(x.Ip, $"tmux kuruldu (çevrimdışı .deb) [{tmuxLine[5..].Trim()}].", StatusKind.Success);
+                    return true;
+                }
+
+                await x.Logger.LogAsync(x.Ip,
+                    $"tmux kurulamadı (çıkış kodu {rc}): {WebServerStep.Tail(output, 5)} " +
+                    "— .deb paketleri cihazın Raspberry Pi OS sürümüne uygun olmayabilir ya da bir bağımlılık eksik.",
+                    StatusKind.Error);
+                return false;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                await x.Logger.LogAsync(x.Ip, $"tmux adımı hata verdi, atlandı: {ex.Message}", StatusKind.Error);
+                return false;
+            }
         }
     }
 
@@ -1864,6 +2078,9 @@ namespace RboxAgent.Modules.Update.Core
             new DllStep(),
             new WebServerStep(),         // v4.5: RasyoBOX web arayüzü (rasyobox-v9.tar.gz)
             new SwtuiStep(),             // v5.2: yalnız swtui (swtui-*.tar.gz → swtui-kur.sh; DLL'e dokunmaz)
+            // v5.3: servis işlemleri kurulumdan sonra (kurulum + Enable aynı çalıştırmada seçilebilir)
+            new UnitServiceStep("Web servisi", "rasyobox-web.service", o => o.WebService),
+            new UnitServiceStep("swtui servisi", "swtui.service", o => o.SwtuiService),
             new ExpandFsRebootStep(),
         };
 

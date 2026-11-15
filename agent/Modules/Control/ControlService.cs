@@ -21,14 +21,57 @@ namespace RboxAgent.Modules.Control
 
     public sealed class CtlExecRequest
     {
-        /// <summary>restartSw | reboot | expand (komutlar burada sabittir; istemci komut gönderemez).</summary>
+        /// <summary>restartSw | reboot | expand | swOn/swOff | webOn/webOff | tuiOn/tuiOff | cronOn/cronOff | loginB1..B4
+        /// (komutlar burada sabittir; istemci komut gönderemez).</summary>
         public string Action { get; set; } = "";
         public List<CtlTarget> Targets { get; set; } = new();
+    }
+
+    /// <summary>TTY ekranı: Data yalnız gönderimde (base64 bayt; ör. "ls\r", Alt+R = ESC 'r').</summary>
+    public sealed class CtlTtyRequest
+    {
+        public string Ip { get; set; } = "";
+        public int Tty { get; set; } = 2;
+        public string? Data { get; set; }
     }
 
     /// <summary>Genel Cihaz Kontrol'ün ajan tarafı (WPF'teki ControlViewModel'in arayüzsüz karşılığı).</summary>
     internal static class ControlService
     {
+        // ── TTY ekranı (WPF TtyWindow karşılığı) ─────────────────────────
+        // IP başına açık tutulan SSH bağlantısı; panel ~1 sn'de bir okur. 30 sn kullanılmayan bağlantı kapanır
+        // (panel kapandı / sekme gitti). Diğer işlemlerden bağımsızdır (TryBegin kilidine girmez).
+        private static readonly ConcurrentDictionary<string, TtyConsole> Ttys = new();
+        private static readonly Timer TtySweep = new(_ =>
+        {
+            foreach (var (ip, c) in Ttys)
+                if (DateTime.UtcNow - c.LastUsed > TimeSpan.FromSeconds(30) && Ttys.TryRemove(ip, out var old)) old.Dispose();
+        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+
+        public static bool IsValidIp(string ip) =>
+            System.Net.IPAddress.TryParse(ip, out var a) && a.AddressFamily == AddressFamily.InterNetwork && ip.Split('.').Length == 4;
+
+        private static TtyConsole Tty(string ip)
+        {
+            var (user, pass) = UpdateService.Credentials()!.Value;
+            return Ttys.GetOrAdd(ip, _ => new TtyConsole(ip, user, pass, UpdateService.WorkFolder));
+        }
+
+        public static async Task<object> TtyReadAsync(CtlTtyRequest r, CancellationToken ct)
+        {
+            var f = await Tty(r.Ip).ReadAsync(r.Tty, ct);
+            return new { tty = f.Tty, rows = f.Rows, cols = f.Cols, cursorX = f.CursorX, cursorY = f.CursorY,
+                         activeTty = f.ActiveTty, lines = f.Lines, attrs = Convert.ToBase64String(f.Attrs) };
+        }
+
+        public static Task TtySendAsync(CtlTtyRequest r, CancellationToken ct) =>
+            Tty(r.Ip).SendAsync(r.Tty, Convert.FromBase64String(r.Data ?? ""), ct);
+
+        public static void TtyClose(string ip)
+        {
+            if (Ttys.TryRemove(ip, out var c)) c.Dispose();
+        }
+
         /// <summary>Aynı anda sorgulanan cihaz sayısı (tüm liste tek seferde SSH açmasın).</summary>
         private const int Parallel = 16;
 
@@ -50,12 +93,23 @@ namespace RboxAgent.Modules.Control
             "c1=$(awk '/^cpu /{t=0; for(i=2;i<=NF;i++) t+=$i; print t, $5+$6}' /proc/stat); sleep 0.5; " +
             "c2=$(awk '/^cpu /{t=0; for(i=2;i<=NF;i++) t+=$i; print t, $5+$6}' /proc/stat); " +
             "echo \"CPU=$c1 $c2\"; echo \"NCPU=$(nproc 2>/dev/null)\"; " +
-            "echo \"SW=$(systemctl is-active serialworker.service 2>/dev/null)\"; " +
+            // SerialWorker: şu an çalışıyor mu | açılışta etkin mi (not-found = servis kurulu değil)
+            "echo \"SW=$(systemctl is-active serialworker.service 2>/dev/null)|$(systemctl is-enabled serialworker.service 2>&1 | head -n1)\"; " +
             // cron.service: açılışta etkin mi | şu an çalışıyor mu (salt okunur; Cihaz Güncelleme enable/disable eder)
             "echo \"CRON=$(systemctl is-enabled cron.service 2>&1 | head -n1)|$(systemctl is-active cron.service 2>/dev/null)\"; " +
             // swtui: kur.sh /usr/local/bin/swtui → ~/rasyobox-tui/swtui bağı kurar; sürüm rasyobox_tui.py'den (boş = kurulu değil)
             "p=$(readlink -f /usr/local/bin/swtui 2>/dev/null); tv=; if [ -f \"$p\" ]; then tv=$(grep -m1 '^__version__' \"${p%/*}/rasyobox_tui.py\" 2>/dev/null | tr -dc '0-9.'); tv=${tv:-?}; fi; " +
-            "echo \"TUI=$tv|$(systemctl is-active swtui.service 2>/dev/null)\"; " +
+            "echo \"TUI=$tv|$(systemctl is-active swtui.service 2>/dev/null)|$(systemctl is-enabled swtui.service 2>&1 | head -n1)\"; " +
+            // RasyoBOX web arayüzü: açılışta etkin mi | şu an çalışıyor mu | 80 portu dinleniyor mu (ss yoksa ?)
+            "echo \"WEB=$(systemctl is-enabled rasyobox-web.service 2>&1 | head -n1)|$(systemctl is-active rasyobox-web.service 2>/dev/null)|" +
+            "$(command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | awk '$4 ~ /:80$/{f=1} END{print f?\"open\":\"closed\"}' || echo '?')\"; " +
+            // Otomatik giriş (raspi-config Boot / Auto Login): raspi-config var mı | console/desktop | giren kullanıcı (boş = kapalı).
+            // Masaüstü ölçütü raspi-config get_boot_cli ile aynı: varsayılan hedef graphical ve lightdm etkin.
+            // Konsol: getty@tty1 autologin.conf (--autologin <kullanıcı>); masaüstü: lightdm.conf autologin-user=
+            "m=console; [ \"$(systemctl get-default 2>/dev/null)\" = graphical.target ] && systemctl is-enabled --quiet lightdm 2>/dev/null && m=desktop; a=; " +
+            "if [ $m = desktop ]; then a=$(sed -n 's/^autologin-user=//p' /etc/lightdm/lightdm.conf 2>/dev/null | head -n1); " +
+            "else f=/etc/systemd/system/getty@tty1.service.d/autologin.conf; if [ -f $f ]; then a=$(grep -o -e '--autologin [^ ]*' $f | head -n1 | cut -d' ' -f2); a=${a:-?}; fi; fi; " +
+            "echo \"LOGIN=$(command -v raspi-config >/dev/null 2>&1 && echo yes || echo no)|$m|$a\"; " +
             "echo \"HOST=$(hostname)\"; " +
             "echo \"CARD=$(lsblk -bdno SIZE /dev/mmcblk0 2>/dev/null)\"; " +
             // USB seri portlar (ttyUSB0/ttyUSB1…, ttyACM0…): sysfs'te USB aygıtına çıkılıp VID:PID, üretici, ürün ve
@@ -106,8 +160,55 @@ namespace RboxAgent.Modules.Control
             "restartSw" => new("systemctl restart serialworker.service", "SerialWorker yeniden başlatıldı", true, 40),
             "reboot" => new(DelayedReboot, "Yeniden başlatılıyor", false, 40),
             "expand" => new("raspi-config --expand-rootfs", "Yeniden başlatma gerekli", true, 60),
+            // Karedeki tıklama: servisi kalıcı olarak aç / kapat (WPF ControlViewModel.Toggle*). Sonuç gerçek son duruma göre.
+            "swOn" => Svc("serialworker.service", "SerialWorker", true, false),
+            "swOff" => Svc("serialworker.service", "SerialWorker", false, false),
+            "webOn" => Svc("rasyobox-web.service", "RasyoBOX web arayüzü", true, false),
+            "webOff" => Svc("rasyobox-web.service", "RasyoBOX web arayüzü", false, false),
+            "tuiOn" => Svc("swtui.service", "swtui (TUI)", true, false),
+            "tuiOff" => Svc("swtui.service", "swtui (TUI)", false, false),
+            "cronOn" => Svc("cron.service", "cron", true, true),
+            "cronOff" => Svc("cron.service", "cron", false, true),
+            // Otomatik giriş: raspi-config nonint do_boot_behaviour (konsol B1 kapalı / B2 açık, masaüstü B3 / B4)
+            "loginB1" => Login("B1", false, false), "loginB2" => Login("B2", true, false),
+            "loginB3" => Login("B3", false, true), "loginB4" => Login("B4", true, true),
             _ => null,
         };
+
+        private static CtlAction Svc(string unit, string name, bool enable, bool sysvFallback) =>
+            new(ServiceToggleCommand(unit, enable, sysvFallback), enable ? $"{name} açıldı" : $"{name} kapatıldı", true, 60);
+
+        private static CtlAction Login(string opt, bool on, bool desktop)
+        {
+            const string conf = "/etc/systemd/system/getty@tty1.service.d/autologin.conf";
+            const string lightdm = "grep -q '^autologin-user=' /etc/lightdm/lightdm.conf";
+            string check = desktop ? (on ? lightdm : "! " + lightdm) : (on ? $"[ -f {conf} ]" : $"[ ! -f {conf} ]");
+            return new($"raspi-config nonint do_boot_behaviour {opt}; {check}",
+                       on ? "Otomatik giriş açıldı · yeniden başlatma gerekli" : "Otomatik giriş kapatıldı · yeniden başlatma gerekli", true, 60);
+        }
+
+        /// <summary>
+        /// WPF ControlViewModel.ServiceToggleCommand ile aynı. Açılış ayarı ile başlat/durdur ayrı komutlar: biri düşse de
+        /// diğeri yapılır. sysvFallback (cron): bozuk perl'li cihazda update-rc.d düşerse SysV senkronu atlanır, o da olmazsa
+        /// wants bağı elle kurulur/kaldırılır. Çıkış kodu gerçek son duruma göredir (is-enabled + is-active).
+        /// </summary>
+        private static string ServiceToggleCommand(string unit, bool enable, bool sysvFallback)
+        {
+            string wants = "/etc/systemd/system/multi-user.target.wants/" + unit;
+            string boot = enable ? $"systemctl enable {unit}" : $"systemctl disable {unit}";
+            if (sysvFallback)
+            {
+                string manual = enable
+                    ? $"[ -f /lib/systemd/system/{unit} ] && ln -sf /lib/systemd/system/{unit} {wants} && systemctl daemon-reload"
+                    : $"rm -f {wants} && systemctl daemon-reload";
+                boot = $"{boot} || SYSTEMCTL_SKIP_SYSV=1 {boot} || {{ {manual}; }}";
+            }
+            return enable
+                ? $"systemctl unmask {unit} 2>/dev/null; {boot}; systemctl start {unit}; " +
+                  $"systemctl is-enabled --quiet {unit} && systemctl is-active --quiet {unit}"
+                : $"{boot}; systemctl stop {unit}; " +
+                  $"! systemctl is-enabled --quiet {unit} && ! systemctl is-active --quiet {unit}";
+        }
 
         public static bool IsKnownAction(string action) => Find(action) != null;
 

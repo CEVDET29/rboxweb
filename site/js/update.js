@@ -1,7 +1,7 @@
 // Cihaz Güncelleme modülü: SSH ile toplu güncelleme, versiyon kontrolü, TTY mesajı ve tek cihaz ayarları.
 // WPF UpdateView / UpdateViewModel karşılığı. Adımların kendisi ajandadadır (UpdateCoordinator, WPF ile aynı kod).
 import { api, stream } from "./api.js";
-import { $, $$, esc, debounce, toast, copyText, ipFilter, sortCompare, storeGet, storeSet, gridButton, ICONS } from "./util.js";
+import { $, $$, esc, debounce, toast, copyText, ipFilter, sortCompare, storeGet, storeSet, gridButton, columnSplitter, ICONS } from "./util.js";
 
 const DASH = "—";
 
@@ -22,7 +22,7 @@ const SISTEM = [
     tip: "RasyoBOX web arayüzünü kurar.\nupdateFiles\\rasyobox-*.tar.gz (en yüksek sürümlü arşiv) cihazın /home/pi klasörüne kopyalanır,\naçılır ve 'sudo bash install.sh' çalıştırılır.\nArşivin içindeki klasör adı ne olursa olsun install.sh bulunup çalıştırılır.\nKurulum bitince arşiv ve açılan klasör cihazdan silinir." },
   // noAll: "Tümünü seç" ve grup kutusu işaretlemez (WPF ile aynı; her cihaza istemeden kurulmasın)
   { k: "swtui", label: "swtui", noAll: true,
-    tip: "swtui terminal arayüzünü kurar / günceller (açılışta otomatik başlar).\nupdateFiles\\swtui-*.tar.gz (en yüksek sürümlü paket) cihaza kopyalanır, açılır ve swtui-kur.sh SSH kullanıcısıyla çalıştırılır.\nSerialWorker DLL'ine, servisine ve SQL ayarlarına dokunmaz.\nKurulum bitince paket ve açılan klasör cihazdan silinir.\n\"Tümünü seç\" bu seçeneği işaretlemez." },
+    tip: "swtui terminal arayüzünü kurar / günceller (açılışta otomatik başlar).\nupdateFiles\\swtui-*.tar.gz (en yüksek sürümlü paket) cihaza kopyalanır, açılır ve swtui-kur.sh SSH kullanıcısıyla çalıştırılır.\nswtui arka planda tmux içinde çalışır: cihazda tmux yoksa önce updateFiles\\tmux\\*.deb paketlerinden çevrimdışı kurulur (kuruluysa dokunulmaz).\nSerialWorker DLL'ine, servisine ve SQL ayarlarına dokunmaz.\nKurulum bitince paket ve açılan klasör cihazdan silinir.\n\"Tümünü seç\" bu seçeneği işaretlemez." },
 ];
 const AG = [
   { k: "dhcpcd", label: "dhcpcd", file: "dhcpcd.txt" },
@@ -89,7 +89,7 @@ export function createUpdate(ctx) {
   let fileInfo = { workFolder: "", editable: [], files: [] };
   const opt = Object.fromEntries(ALL_KEYS.map((k) => [k, false]));
   Object.assign(opt, {
-    conspy: "None", cronService: "None", autologin: "None",
+    conspy: "None", cronService: "None", autologin: "None", swtuiService: "None", webService: "None",
     wlan0MaskOn: false, wlan0GatewayOn: false, eth0MaskOn: false, eth0GatewayOn: false,
     restartDhcpcd: false, restartWpa: false,
   });
@@ -100,6 +100,8 @@ export function createUpdate(ctx) {
   const single = { doYatak: false, yatakId: 0, doServer: false, doEth0: false, doWlan0: false };
 
   const isBusy = () => running !== null;
+  /** "Yalnız hatalıları işaretle" ölçütü (WPF UpdateTarget.HasError): DURUM hata ya da VERSİYON hata / SSH'ye ulaşılamadı. */
+  const hasError = (r) => r.statusSev === "error" || r.versionSev === "error" || /^(Hata|SSH yok|SSH bağlanamadı)/.test(r.version || "");
 
   // ── İskelet ─────────────────────────────────────────────────
   const optionHtml = (o) => `
@@ -110,6 +112,13 @@ export function createUpdate(ctx) {
         <button class="btn icon" data-open="${o.file}" title="updateFiles\\${esc(o.file)} dosyasını aç (sunucuda)">${ICONS.pencil}</button>` : ""}
     </div>`;
 
+  const svcTip = (unit, install) => `${unit}
+Enable: açılışta başlasın + hemen başlat.
+Disable: açılışta başlamasın + hemen durdur.
+Başlat / Durdur: yalnız şimdi; açılış ayarına dokunmaz (yeniden açılınca açılış ayarına göre davranır).
+Sonuç gerçek duruma (is-enabled / is-active) göre raporlanır. Servis cihazda kurulu değilse uyarıyla atlanır.
+${install} kurulumu da seçiliyse önce kurulur, sonra bu işlem yapılır.
+"Tümünü seç" bu satırı değiştirmez.`;
   const chips = (name, values) => `<span class="chips" role="radiogroup">${values.map(([v, t]) =>
     `<button type="button" class="chip" role="radio" data-radio="${name}" data-v="${v}" aria-checked="false">${t}</button>`).join("")}</span>`;
 
@@ -133,8 +142,7 @@ export function createUpdate(ctx) {
               <button class="btn icon" id="uToggleRooms" title="Tüm odaları daralt / genişlet">${ICONS.chevrons}</button>
               ${gridButton()}
               <span style="width:8px"></span>
-              <button class="link" id="uCheckAll">Tümünü işaretle</button>
-              <button class="link" id="uUncheckAll" title="Tüm satırların işaretini kaldır">Temizle</button>
+              <span class="btn-group" role="group" aria-label="İşaretleme"><button class="btn icon" id="uCheckAll" title="Tümünü işaretle" aria-label="Tümünü işaretle">${ICONS.checkAll}</button><span class="sep"></span><button class="btn icon" id="uUncheckAll" title="Seçimi temizle · tüm satırların işaretini kaldır (satırlar silinmez)" aria-label="Seçimi temizle">${ICONS.checkNone}</button><span class="sep"></span><button class="btn icon" id="uCheckFailed" title="Yalnız hatalıları işaretle · DURUM ya da VERSİYON sütununda hata olanlar (Hata, SSH yok, SSH bağlanamadı) işaretlenir, diğerlerinin işareti kalkar" aria-label="Yalnız hatalıları işaretle">${ICONS.warn}</button></span>
             </div>
           </div>
           <div class="table-wrap upd-wrap" id="uTableWrap" tabindex="0">
@@ -170,15 +178,17 @@ export function createUpdate(ctx) {
 
           <section class="card" id="uOptions">
             <div class="card-h row" style="justify-content:space-between">GÜNCELLEMELER
-              <span class="row tight" style="text-transform:none;letter-spacing:0"><button class="link" id="uSelAll">Tümünü seç</button><button class="link" id="uSelNone" title="Tüm seçimleri kaldır (cron / autologin / conspy dahil)">Kaldır</button></span></div>
+              <span class="row tight" style="text-transform:none;letter-spacing:0"><button class="link" id="uSelAll">Tümünü seç</button><button class="link" id="uSelNone" title="Tüm seçimleri kaldır (cron / autologin / conspy / swtui ve web servisi dahil)">Kaldır</button></span></div>
             <div class="card-b">
               <label class="chk grp" title="Bu gruptaki tüm güncellemeleri seç / kaldır"><input type="checkbox" data-group="sistem"> Sistem</label>
               <div class="optgrid">${SISTEM.map(optionHtml).join("")}</div>
               <div class="radio-row"><span class="lbl" title="${esc(CONSPY_TIP)}">conspy</span>${chips("conspy", [["None", "Kurma"], ["Apt", "apt-get (net)"], ["Offline", "çevrimdışı .deb"]])}</div>
+              <div class="radio-row"><span class="lbl" title="${esc(svcTip("swtui.service (Cihaz Kontrol'deki TUI karesi)", "swtui"))}">swtui</span>${chips("swtuiService", [["None", "Dokunma"], ["Enable", "Enable"], ["Disable", "Disable"], ["Start", "Başlat"], ["Stop", "Durdur"]])}</div>
+              <div class="radio-row"><span class="lbl" title="${esc(svcTip("rasyobox-web.service (Cihaz Kontrol'deki WEB karesi)", "Web server"))}">web</span>${chips("webService", [["None", "Dokunma"], ["Enable", "Enable"], ["Disable", "Disable"], ["Start", "Başlat"], ["Stop", "Durdur"]])}</div>
               <hr class="divider">
               <label class="chk grp" title="Bu gruptaki tüm güncellemeleri seç / kaldır (cron ve autologin hariç)"><input type="checkbox" data-group="ag"> Ağ</label>
               <div class="optgrid">${AG.map(optionHtml).join("")}</div>
-              <div class="radio-row"><span class="lbl">cron servisi</span>${chips("cronService", [["None", "Dokunma"], ["Enable", "Enable"], ["Disable", "Disable"]])}</div>
+              <div class="radio-row"><span class="lbl" title="cron.service">cron</span>${chips("cronService", [["None", "Dokunma"], ["Enable", "Enable"], ["Disable", "Disable"]])}</div>
               <div class="radio-row"><span class="lbl" title="${esc(AUTOLOGIN_TIP)}">autologin</span>${chips("autologin", [["None", "Dokunma"], ["Enable", "Enable"], ["Disable", "Disable"]])}</div>
               <hr class="divider">
               <label class="chk grp" title="Bu gruptaki tüm güncellemeleri seç / kaldır"><input type="checkbox" data-group="dosya"> Dosyalar ve servisler</label>
@@ -308,6 +318,30 @@ export function createUpdate(ctx) {
   for (const k of ["wlan0Gateway", "eth0Gateway", "singleServerIp", "singleEth0Ip", "singleWlan0Ip"]) ipFilter($(`[data-cfg="${k}"]`, root));
   for (const k of ["wlan0Mask", "eth0Mask", "singleEth0Mask", "singleWlan0Mask"]) ipFilter($(`[data-cfg="${k}"]`, root), "mask");
 
+  // Liste ile seçenekler arasında ayraç (WPF 1.63.1 / 1.63.2): seçenekler alanı 440 px'ten ızgaranın %65'ine kadar
+  // genişler. En küçük genişlik, seçenek satırlarının (etiket + Dokunma … Durdur) tek satıra sığdığı genişliktir;
+  // yazı tipi / yakınlaştırmaya göre ölçülür ve ilk açılışta da uygulanır (--split-min).
+  let optsMin = 440;
+  const measureOpts = () => {
+    const pane = el.batch.lastElementChild;
+    if (!pane.offsetWidth) return;   // sekme gizli: görünür olunca yeniden ölçülür
+    let need = 0;
+    for (const row of $$(".radio-row", el.options)) {
+      const lbl = row.querySelector(".lbl"), chipsEl = row.querySelector(".chips");
+      if (!lbl || !chipsEl) continue;
+      const cs = [...chipsEl.children];
+      const sum = cs.reduce((s, c) => s + c.getBoundingClientRect().width, 0) + 6 * (cs.length - 1);
+      need = Math.max(need, lbl.getBoundingClientRect().width + 8 + sum + (pane.offsetWidth - row.clientWidth));
+    }
+    optsMin = Math.max(320, Math.ceil(need) + 2);
+    el.batch.style.setProperty("--split-min", optsMin + "px");
+  };
+  columnSplitter(el.batch, "rbox.upd.split", {
+    side: "right", minRight: 420, min: () => (measureOpts(), optsMin), max: () => el.batch.getBoundingClientRect().width * 0.65,
+  });
+  new ResizeObserver(measureOpts).observe(el.batch);
+  document.fonts?.ready.then(measureOpts);
+
   // ── Günlük ──────────────────────────────────────────────────
   const MAX_LOG = 5000;
   function addLog(box, { time, ip, message, kind }) {
@@ -411,7 +445,7 @@ export function createUpdate(ctx) {
   q("uSelAll").addEventListener("click", () => { SEL_KEYS.forEach((k) => (opt[k] = true)); syncOptionsUi(); });
   q("uSelNone").addEventListener("click", () => {
     ALL_KEYS.forEach((k) => (opt[k] = false));
-    opt.cronService = opt.autologin = opt.conspy = "None";
+    opt.cronService = opt.autologin = opt.conspy = opt.swtuiService = opt.webService = "None";
     syncOptionsUi();
   });
 
@@ -520,6 +554,7 @@ export function createUpdate(ctx) {
   });
   q("uCheckAll").addEventListener("click", () => { if (!isBusy()) { rows.forEach((r) => (r.checked = true)); render(); } });
   q("uUncheckAll").addEventListener("click", () => { if (!isBusy()) { rows.forEach((r) => (r.checked = false)); render(); } });
+  q("uCheckFailed").addEventListener("click", () => { if (!isBusy()) { rows.forEach((r) => (r.checked = hasError(r))); render(); } });
 
   // ── Tablo ───────────────────────────────────────────────────
   function visibleRows() {
@@ -541,6 +576,9 @@ export function createUpdate(ctx) {
     el.head.innerHTML = `<th style="cursor:default"><input type="checkbox" id="uAllBox" ${allState ? "checked" : ""} ${isBusy() ? "disabled" : ""} title="Tümünü işaretle / kaldır"></th>` +
       COLUMNS.map((c) => `<th data-k="${c.key}">${c.label}${sort.key === c.key ? `<span class="arr">${sort.dir > 0 ? "▲" : "▼"}</span>` : ""}</th>`).join("");
     const allBox = $("#uAllBox", el.head); if (allBox) allBox.indeterminate = allState === null;
+    q("uCheckAll").disabled = isBusy() || rows.length === 0 || checked === rows.length;
+    q("uUncheckAll").disabled = isBusy() || checked === 0;
+    q("uCheckFailed").disabled = isBusy() || !rows.some(hasError);
 
     if (rows.length === 0) {
       el.body.innerHTML = `<tr><td class="empty" colspan="8">Cihaz listesi yüklenmedi.<br>Excel'i üst banttaki "Cihaz listesi" düğmesinden seçin ya da pencereye sürükleyin; tek tek IP de ekleyebilirsiniz.</td></tr>`;
@@ -618,6 +656,13 @@ export function createUpdate(ctx) {
     }
     if (e.target.closest("input.cell-edit")) return;
 
+    // Çift tıklama = hücreyi düzenle. "dblclick" kullanılamaz: her tıklama tabloyu yeniden çizdiği için
+    // dblclick olayı artık sayfada olmayan eski hücreye gider ve tbody'ye hiç ulaşmaz.
+    if (e.detail === 2) {
+      const td = e.target.closest("td[data-edit]");
+      if (td) { window.getSelection()?.removeAllRanges(); startEdit(td); return; }
+    }
+
     // Satır seçimi: tıkla = tek, Ctrl = ekle/çıkar, Shift = aralık
     const order = visibleRows().filter((r) => !rooms[r.room].collapsed).map((r) => r.id);
     if (e.shiftKey && lastClicked != null && order.includes(lastClicked)) {
@@ -630,10 +675,9 @@ export function createUpdate(ctx) {
     render();
   });
 
-  // Hücre düzenleme (çift tıklama): geçersiz değer reddedilir ve eski değer döner
-  el.body.addEventListener("dblclick", (e) => {
-    if (e.target.closest("[data-copy]")) return;          // kopyala düğmesine hızlı iki tıklama
-    const td = e.target.closest("td[data-edit]"); if (!td || isBusy()) return;
+  // Hücre düzenleme (çift tıklama, yukarıdaki click işleyicisinden): geçersiz değer reddedilir ve eski değer döner
+  function startEdit(td) {
+    if (isBusy()) return;
     const r = rows.find((x) => x.id === +td.closest("tr").dataset.id);
     const field = td.dataset.edit;
     const input = document.createElement("input");
@@ -664,7 +708,7 @@ export function createUpdate(ctx) {
     };
     input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") finish(true); else if (ev.key === "Escape") finish(false); });
     input.addEventListener("blur", () => finish(true));
-  });
+  }
 
   // ── wlan0 / eth0 sıralı doldurma ────────────────────────────
   q("uSeqFill").addEventListener("change", (e) => { cfg.sequentialIpFill = e.target.checked; saveSettings(); });
@@ -775,6 +819,7 @@ export function createUpdate(ctx) {
 
   function buildOptions() {
     const o = { conspy: opt.conspy, cronService: opt.cronService, autologin: opt.autologin,
+      swtuiService: opt.swtuiService, webService: opt.webService,
       restartDhcpcd: opt.restartDhcpcd, restartWpa: opt.restartWpa };
     for (const k of ALL_KEYS) o[k] = opt[k];
     // Ajandaki UpdateOptions adları
@@ -798,7 +843,8 @@ export function createUpdate(ctx) {
 
     const anyRowDhcpcd = targets.some((t) => t.wlan0 || t.eth0);
     const anyFeature = ALL_KEYS.some((k) => opt[k]);
-    if (!anyFeature && !anyRowDhcpcd && opt.cronService === "None" && opt.autologin === "None" && opt.conspy === "None")
+    if (!anyFeature && !anyRowDhcpcd && opt.cronService === "None" && opt.autologin === "None" && opt.conspy === "None"
+      && opt.swtuiService === "None" && opt.webService === "None")
       return log("En az bir güncelleme seçin.", "error");
     if (opt.jsonSettings && targets.some((t) => t.yatakId === "") &&
         !confirm("Yatak ID boş olan satırlar var. JsonSettings güncellenecek. Devam edilsin mi?")) return;
